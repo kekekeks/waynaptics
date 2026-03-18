@@ -1,5 +1,6 @@
 #include "shim.h"
 #include "include/device_init.h"
+#include "include/ptrveloc.h"
 #include <cstring>
 #include <cstdio>
 
@@ -11,6 +12,10 @@ typedef void (*PtrCtrlProcPtr)(DeviceIntPtr device, PtrCtrl *ctrl);
 typedef double (*PointerAccelerationProfileFunc)(
     DeviceIntPtr dev, DeviceVelocityPtr vel,
     double velocity, double threshold, double accelCoeff);
+
+/* Defined in ptrveloc.cpp */
+extern void waynaptics_accel_set_profile(
+    double (*profile)(DeviceIntPtr, DeviceVelocityPtr, double, double, double));
 
 DeviceInitState *waynaptics_get_device_init_state(void)
 {
@@ -77,8 +82,11 @@ DeviceVelocityPtr
 GetDevicePredictableAccelData(DeviceIntPtr dev)
 {
     DeviceVelocityRec *vel = &g_device_init_state.velocity;
-    vel->const_acceleration = 1.0;
-    vel->corr_mul = 10.0;
+    /* Don't reset if already configured by the driver */
+    if (vel->const_acceleration == 0.0)
+        vel->const_acceleration = 1.0;
+    if (vel->corr_mul == 0.0)
+        vel->corr_mul = 10.0;
     return vel;
 }
 
@@ -86,7 +94,7 @@ void
 SetDeviceSpecificAccelerationProfile(DeviceVelocityPtr vel,
                                      PointerAccelerationProfileFunc profile)
 {
-    /* Store the profile function pointer; not called in our pipeline */
+    waynaptics_accel_set_profile(profile);
 }
 
 } /* extern "C" */

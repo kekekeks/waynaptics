@@ -8,6 +8,7 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#include <map>
 
 enum ParamType { PT_INT = 0, PT_BOOL = 1, PT_DOUBLE = 2 };
 
@@ -108,6 +109,39 @@ static std::string trim(const std::string &s) {
     if (start == std::string::npos) return "";
     size_t end = s.find_last_not_of(" \t\r\n");
     return s.substr(start, end - start + 1);
+}
+
+/*
+ * Pre-load synclient config into the Options map BEFORE SynapticsPreInit.
+ * This ensures set_default_parameters() reads the correct values
+ * (especially MinSpeed/MaxSpeed/AccelFactor which affect acceleration setup).
+ */
+extern "C" bool waynaptics_preload_synclient_options(const char *path, void *opts_ptr) {
+    /* Options class layout matches main.cpp: single member std::map<string,string> */
+    auto *opts_map = static_cast<std::map<std::string, std::string> *>(opts_ptr);
+    std::ifstream file(path);
+    if (!file.is_open())
+        return false;
+
+    std::string line;
+    while (std::getline(file, line)) {
+        std::string trimmed = trim(line);
+        if (trimmed.empty() || trimmed == "Parameter settings:")
+            continue;
+        size_t eq_pos = trimmed.find('=');
+        if (eq_pos == std::string::npos)
+            continue;
+        std::string name = trim(trimmed.substr(0, eq_pos));
+        std::string value_str = trim(trimmed.substr(eq_pos + 1));
+        if (name.empty() || value_str.empty())
+            continue;
+        if (name == "GrabEventDevice" || name == "TouchpadOff")
+            continue;
+        /* Only inject if it's a known synclient parameter */
+        if (find_param(name.c_str()) != nullptr)
+            (*opts_map)[name] = value_str;
+    }
+    return true;
 }
 
 extern "C" bool waynaptics_load_synclient_config(const char *path, DeviceIntPtr dev) {

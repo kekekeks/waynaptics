@@ -36,6 +36,7 @@ add_executable(waynaptics main.cpp
         output_backend.cpp
         event_posting.cpp
         synclient_loader.cpp
+        ptrveloc.cpp
         include/device_init.h
         include/output_backend.h
         include/xi_properties.h)

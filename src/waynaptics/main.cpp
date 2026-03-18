@@ -9,6 +9,7 @@
 
 #include "include/synshared.h"
 #include "include/output_backend.h"
+#include "include/ptrveloc.h"
 
 // Options class (matches options.cpp)
 class Options {
@@ -25,6 +26,7 @@ extern bool g_verbose_mouse_events;  // defined in event_posting.cpp
 bool g_verbose_evdev_events = false;
 
 extern "C" bool waynaptics_load_synclient_config(const char *path, DeviceIntPtr dev);
+extern "C" bool waynaptics_preload_synclient_options(const char *path, void *opts_map_ptr);
 
 // UinputBackend and DryBackend are defined in output_backend.cpp but not
 // declared in the header. Forward-declare the factory we need.
@@ -96,6 +98,12 @@ int main(int argc, char *argv[]) {
     if (dry)
         opts->options["GrabEventDevice"] = "0";
 
+    // Pre-load synclient config into options BEFORE PreInit
+    // so set_default_parameters() reads correct MinSpeed/MaxSpeed/AccelFactor
+    if (config_path) {
+        waynaptics_preload_synclient_options(config_path, &opts->options);
+    }
+
     // --- Create device structures ---
     DeviceIntRec devRec = {};
     InputInfoRec info = {};
@@ -137,6 +145,9 @@ int main(int argc, char *argv[]) {
         delete opts;
         return 1;
     }
+
+    // --- Initialize pointer acceleration (after driver registered its profile) ---
+    waynaptics_accel_init();
 
     // --- Load synclient config (after properties are initialized) ---
     if (config_path) {

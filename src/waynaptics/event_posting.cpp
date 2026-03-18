@@ -1,9 +1,11 @@
 #include "include/synshared.h"
 #include "include/output_backend.h"
 #include "include/device_init.h"
+#include "include/ptrveloc.h"
 
 #include <cstdarg>
 #include <cstdio>
+#include <cmath>
 
 bool g_verbose_mouse_events = false;
 
@@ -16,15 +18,27 @@ xf86PostMotionEvent(DeviceIntPtr dev, int is_absolute,
 
     va_list args;
     va_start(args, num_valuators);
-    int dx = va_arg(args, int);
-    int dy = va_arg(args, int);
+    int raw_dx = va_arg(args, int);
+    int raw_dy = va_arg(args, int);
     va_end(args);
 
-    if (g_verbose_mouse_events)
-        fprintf(stderr, "[MOUSE] motion dx=%d dy=%d\n", dx, dy);
+    double dx = raw_dx;
+    double dy = raw_dy;
 
-    g_output_backend->post_motion(dx, dy);
-    g_output_backend->sync();
+    /* Apply pointer acceleration (velocity tracking + profile) */
+    waynaptics_accel_apply(dev, &dx, &dy);
+
+    int out_dx = (int)round(dx);
+    int out_dy = (int)round(dy);
+
+    if (g_verbose_mouse_events)
+        fprintf(stderr, "[MOUSE] motion raw=%d,%d accel=%d,%d\n",
+                raw_dx, raw_dy, out_dx, out_dy);
+
+    if (out_dx != 0 || out_dy != 0) {
+        g_output_backend->post_motion(out_dx, out_dy);
+        g_output_backend->sync();
+    }
 }
 
 extern "C" void
