@@ -29,6 +29,22 @@ add_executable(waynaptics main.cpp
         valuators.c
         fakeclude/xf86Module.h
         atoms.cpp
-        options.cpp)
-target_include_directories(waynaptics PRIVATE include fakeclude ../../external/xf86-input-synaptics/include  ${LIBEVDEV_INCLUDE_DIRS} ${GLIB_INCLUDE_DIRS})
+        options.cpp
+        device_init.cpp
+        device_mgmt.cpp
+        xi_properties.cpp
+        output_backend.cpp
+        event_posting.cpp
+        synclient_loader.cpp
+        include/device_init.h
+        include/output_backend.h
+        include/xi_properties.h)
+target_include_directories(waynaptics PRIVATE include fakeclude ../../external/xf86-input-synaptics/include ../../external/xf86-input-synaptics/src ${LIBEVDEV_INCLUDE_DIRS} ${GLIB_INCLUDE_DIRS})
 target_link_libraries(waynaptics PRIVATE ${LIBEVDEV_LIBRARIES} ${GLIB_LDFLAGS})
+
+# Standalone utility to dump actual synaptics XI properties from running X server
+find_package(X11 REQUIRED)
+pkg_search_module(XI REQUIRED xi)
+add_executable(waynaptics-dump dump_synaptics.c)
+target_include_directories(waynaptics-dump PRIVATE ../../external/xf86-input-synaptics/include)
+target_link_libraries(waynaptics-dump PRIVATE ${X11_LIBRARIES} ${XI_LIBRARIES})

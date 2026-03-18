@@ -23,7 +23,7 @@ Parameter settings:
     MinSpeed                = 0.822012
     MaxSpeed                = 20.286
     AccelFactor             = 0.255525
-    TouchpadOff             = 2
+    TouchpadOff             = 0
     LockedDrags             = 0
     LockedDragTimeout       = 5000
     RTCornerButton          = 0

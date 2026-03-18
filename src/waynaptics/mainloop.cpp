@@ -64,9 +64,9 @@ extern _X_EXPORT OsTimerPtr TimerSet(OsTimerPtr timerPtr,
     auto timer = timerPtr ? (Timer *) timerPtr : new Timer();
     timer->callback = func;
     timer->arg = arg;
-    timer->setTimeoutMs(millis);
-
-
+    if (func && millis > 0)
+        timer->setTimeoutMs(millis);
+    return timer;
 }
 
 extern _X_EXPORT void TimerCancel(OsTimerPtr ptr) {

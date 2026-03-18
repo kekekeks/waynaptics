@@ -283,6 +283,39 @@ int xf86SetIntOption(XF86OptionPtr options, const char* name, int def);
 double xf86SetRealOption(XF86OptionPtr options, const char* name, double def);
 const char* xf86CheckStrOption(XF86OptionPtr options, const char* name, const char* def);
 #define xf86FindOptionValue(options, name) xf86CheckStrOption(options, name, NULL)
+int xf86SetBoolOption(XF86OptionPtr options, const char* name, int def);
+char* xf86SetStrOption(XF86OptionPtr options, const char* name, const char* def);
+double xf86CheckPercentOption(XF86OptionPtr options, const char* name, double def);
+double xf86SetPercentOption(XF86OptionPtr options, const char* name, double def);
+XF86OptionPtr xf86ReplaceStrOption(XF86OptionPtr options, const char* name, const char* value);
+int xf86OpenSerial(XF86OptionPtr options);
+int xf86CloseSerial(int fd);
+void xf86AddEnabledDevice(InputInfoPtr pInfo);
+void xf86RemoveEnabledDevice(InputInfoPtr pInfo);
+void xf86DeleteInput(InputInfoPtr pInfo, int flags);
+void xf86AddInputDriver(InputDriverPtr driver, void* module, int flags);
+
+// Device init stubs
+typedef void (*PtrCtrlProcPtr)(DeviceIntPtr device, PtrCtrl *ctrl);
+typedef double (*PointerAccelerationProfileFunc)(DeviceIntPtr dev, DeviceVelocityPtr vel, double speed_in, double totaltime, double integr);
+Bool InitPointerDeviceStruct(DevicePtr device, CARD8 *map, int numButtons, Atom *btn_labels, PtrCtrlProcPtr controlProc, int numMotionEvents, int numAxes, Atom *axes_labels);
+int GetMotionHistorySize(void);
+Bool xf86InitValuatorAxisStruct(DeviceIntPtr dev, int axnum, Atom label, int minval, int maxval, int resolution, int min_res, int max_res, int mode);
+void xf86InitValuatorDefaults(DeviceIntPtr dev, int axnum);
+Bool SetScrollValuator(DeviceIntPtr dev, int axnum, enum ScrollType type, double increment, int flags);
+DeviceVelocityPtr GetDevicePredictableAccelData(DeviceIntPtr dev);
+void SetDeviceSpecificAccelerationProfile(DeviceVelocityPtr vel, PointerAccelerationProfileFunc profile);
+
+// XI property functions
+int XIChangeDeviceProperty(DeviceIntPtr dev, Atom property, Atom type, int format, int mode, unsigned long len, const void *value, Bool sendevent);
+void XISetDevicePropertyDeletable(DeviceIntPtr dev, Atom property, Bool deletable);
+void XIDeleteDeviceProperty(DeviceIntPtr dev, Atom property, Bool sendevent);
+int XIRegisterPropertyHandler(DeviceIntPtr dev, int (*SetProperty)(DeviceIntPtr, Atom, XIPropertyValuePtr, BOOL), int (*GetProperty)(DeviceIntPtr, Atom), int (*DeleteProperty)(DeviceIntPtr, Atom));
+
+// Event posting
+void xf86PostMotionEvent(DeviceIntPtr dev, int is_absolute, int first_valuator, int num_valuators, ...);
+void xf86PostButtonEvent(DeviceIntPtr dev, int is_absolute, int button, int is_down, int first_valuator, int num_valuators, ...);
+void xf86PostMotionEventM(DeviceIntPtr dev, int is_absolute, const ValuatorMask *mask);
 // No-op
 #define input_lock()
 #define input_unlock()
