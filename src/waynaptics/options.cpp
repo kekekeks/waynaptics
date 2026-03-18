@@ -1,17 +1,10 @@
 #include "synshared.h"
+#include "include/options.h"
 #include <string>
 #include <map>
 #include <stdexcept>
 #include <cstring>
 #include <strings.h>
-
-
-class Options
-{
-public:
-    std::map<std::string, std::string> options;
-
-};
 
 extern "C" {
 

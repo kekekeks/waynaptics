@@ -1,6 +1,7 @@
 #include "shim.h"
 #include "include/synshared.h"
 #include "include/xi_properties.h"
+#include "include/options.h"
 #include <synaptics-properties.h>
 #include <cstdio>
 #include <cstring>
@@ -116,9 +117,8 @@ static std::string trim(const std::string &s) {
  * This ensures set_default_parameters() reads the correct values
  * (especially MinSpeed/MaxSpeed/AccelFactor which affect acceleration setup).
  */
-extern "C" bool waynaptics_preload_synclient_options(const char *path, void *opts_ptr) {
-    /* Options class layout matches main.cpp: single member std::map<string,string> */
-    auto *opts_map = static_cast<std::map<std::string, std::string> *>(opts_ptr);
+extern "C" bool waynaptics_preload_synclient_options(const char *path, XF86OptionPtr opts_ptr) {
+    auto *opts = static_cast<Options *>(opts_ptr);
     std::ifstream file(path);
     if (!file.is_open())
         return false;
@@ -139,7 +139,7 @@ extern "C" bool waynaptics_preload_synclient_options(const char *path, void *opt
             continue;
         /* Only inject if it's a known synclient parameter */
         if (find_param(name.c_str()) != nullptr)
-            (*opts_map)[name] = value_str;
+            opts->options[name] = value_str;
     }
     return true;
 }

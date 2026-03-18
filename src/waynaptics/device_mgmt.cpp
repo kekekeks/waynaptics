@@ -1,15 +1,10 @@
 #include "synshared.h"
+#include "include/options.h"
 #include <glib.h>
 #include <map>
 #include <string>
 #include <fcntl.h>
 #include <unistd.h>
-
-class Options
-{
-public:
-    std::map<std::string, std::string> options;
-};
 
 static std::map<int, guint> fd_source_map;
 

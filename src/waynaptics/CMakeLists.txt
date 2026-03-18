@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.25)
+cmake_minimum_required(VERSION 3.16)
 project(waynaptics)
 #include (${CMAKE_ROOT}/Modules/FindX11.cmake)
 find_package(PkgConfig REQUIRED)
@@ -44,8 +44,12 @@ target_include_directories(waynaptics PRIVATE include fakeclude ../../external/x
 target_link_libraries(waynaptics PRIVATE ${LIBEVDEV_LIBRARIES} ${GLIB_LDFLAGS})
 
 # Standalone utility to dump actual synaptics XI properties from running X server
-find_package(X11 REQUIRED)
-pkg_search_module(XI REQUIRED xi)
-add_executable(waynaptics-dump dump_synaptics.c)
-target_include_directories(waynaptics-dump PRIVATE ../../external/xf86-input-synaptics/include)
-target_link_libraries(waynaptics-dump PRIVATE ${X11_LIBRARIES} ${XI_LIBRARIES})
+find_package(X11 QUIET)
+pkg_search_module(XI xi)
+if(X11_FOUND AND XI_FOUND)
+  add_executable(waynaptics-dump dump_synaptics.c)
+  target_include_directories(waynaptics-dump PRIVATE ../../external/xf86-input-synaptics/include)
+  target_link_libraries(waynaptics-dump PRIVATE ${X11_LIBRARIES} ${XI_LIBRARIES})
+else()
+  message(STATUS "X11/XI not found, skipping waynaptics-dump")
+endif()

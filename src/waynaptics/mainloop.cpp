@@ -19,11 +19,12 @@ public:
     void *arg = nullptr;
     guint _timerId = 0;
 private:
-    static void g_timer_func(void* userData)
+    static gboolean g_timer_func(void* userData)
     {
         auto timer = (Timer *) userData;
         timer->_timerId = 0;
         timer->callback(timer, GetTimeInMillis(), timer->arg);
+        return G_SOURCE_REMOVE;
     }
 public:
     void cancel() {
@@ -36,7 +37,7 @@ public:
 
     void setTimeoutMs(CARD32 ms) {
         cancel();
-        _timerId = g_timeout_add_once(ms, g_timer_func, this);
+        _timerId = g_timeout_add(ms, g_timer_func, this);
     }
 
     ~Timer()

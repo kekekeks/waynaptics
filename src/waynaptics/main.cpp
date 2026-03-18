@@ -6,16 +6,16 @@
 #include <glib.h>
 #include <string>
 #include <map>
+#include <dirent.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/ioctl.h>
+#include <linux/input.h>
 
 #include "include/synshared.h"
 #include "include/output_backend.h"
 #include "include/ptrveloc.h"
-
-// Options class (matches options.cpp)
-class Options {
-public:
-    std::map<std::string, std::string> options;
-};
+#include "include/options.h"
 
 extern "C" {
     extern InputDriverRec SYNAPTICS;
@@ -26,7 +26,7 @@ extern bool g_verbose_mouse_events;  // defined in event_posting.cpp
 bool g_verbose_evdev_events = false;
 
 extern "C" bool waynaptics_load_synclient_config(const char *path, DeviceIntPtr dev);
-extern "C" bool waynaptics_preload_synclient_options(const char *path, void *opts_map_ptr);
+extern "C" bool waynaptics_preload_synclient_options(const char *path, XF86OptionPtr opts);
 
 // UinputBackend and DryBackend are defined in output_backend.cpp but not
 // declared in the header. Forward-declare the factory we need.
@@ -42,6 +42,48 @@ static void signal_handler(int sig) {
         g_main_loop_quit(g_main_loop_instance);
 }
 
+/*
+ * Resolve a device name (e.g. "SYNA801B:00 06CB:CEC7 Touchpad") to its
+ * /dev/input/eventN path by scanning all event devices.
+ */
+static std::string resolve_device_name(const char *name) {
+    DIR *dir = opendir("/dev/input");
+    if (!dir) {
+        fprintf(stderr, "waynaptics: cannot open /dev/input\n");
+        return "";
+    }
+
+    std::string result;
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != nullptr) {
+        if (strncmp(entry->d_name, "event", 5) != 0)
+            continue;
+
+        std::string path = std::string("/dev/input/") + entry->d_name;
+        int fd = open(path.c_str(), O_RDONLY | O_NONBLOCK);
+        if (fd < 0)
+            continue;
+
+        char dev_name[256] = {0};
+        if (ioctl(fd, EVIOCGNAME(sizeof(dev_name)), dev_name) >= 0) {
+            if (strstr(dev_name, name) != nullptr) {
+                result = path;
+                close(fd);
+                break;
+            }
+        }
+        close(fd);
+    }
+    closedir(dir);
+
+    if (result.empty())
+        fprintf(stderr, "waynaptics: no device matching name '%s' found\n", name);
+    else
+        fprintf(stderr, "waynaptics: resolved '%s' → %s\n", name, result.c_str());
+
+    return result;
+}
+
 static void print_usage(const char *prog) {
     fprintf(stderr,
         "Usage: %s [OPTIONS]\n"
@@ -51,6 +93,8 @@ static void print_usage(const char *prog) {
         "Options:\n"
         "  -c, --config <file>   Path to synclient parameter dump\n"
         "  -d, --device <path>   Specific evdev device path (auto-detect if omitted)\n"
+        "  -n, --device-name <name>\n"
+        "                        Match evdev device by name substring (e.g. \"Touchpad\")\n"
         "      --dry             Dry mode: don't grab device, don't create uinput\n"
         "      --log-evdev       Log raw evdev touchpad events to stderr\n"
         "      --log-output      Log produced mouse/scroll output events to stderr\n"
@@ -61,31 +105,48 @@ static void print_usage(const char *prog) {
 int main(int argc, char *argv[]) {
     const char *config_path = nullptr;
     const char *device_path = nullptr;
+    const char *device_name = nullptr;
     bool dry = false;
     bool log_evdev = false;
     bool log_output = false;
 
     static struct option long_options[] = {
-        {"config",     required_argument, nullptr, 'c'},
-        {"device",     required_argument, nullptr, 'd'},
-        {"dry",        no_argument,       nullptr, 1},
-        {"log-evdev",  no_argument,       nullptr, 2},
-        {"log-output", no_argument,       nullptr, 3},
-        {"help",       no_argument,       nullptr, 'h'},
+        {"config",      required_argument, nullptr, 'c'},
+        {"device",      required_argument, nullptr, 'd'},
+        {"device-name", required_argument, nullptr, 'n'},
+        {"dry",         no_argument,       nullptr, 1},
+        {"log-evdev",   no_argument,       nullptr, 2},
+        {"log-output",  no_argument,       nullptr, 3},
+        {"help",        no_argument,       nullptr, 'h'},
         {nullptr, 0, nullptr, 0}
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "c:d:h", long_options, nullptr)) != -1) {
+    while ((opt = getopt_long(argc, argv, "c:d:n:h", long_options, nullptr)) != -1) {
         switch (opt) {
             case 'c': config_path = optarg; break;
             case 'd': device_path = optarg; break;
+            case 'n': device_name = optarg; break;
             case 1:   dry = true; break;
             case 2:   log_evdev = true; break;
             case 3:   log_output = true; break;
             case 'h': print_usage(argv[0]); return 0;
             default:  print_usage(argv[0]); return 1;
         }
+    }
+
+    if (device_path && device_name) {
+        fprintf(stderr, "waynaptics: --device and --device-name are mutually exclusive\n");
+        return 1;
+    }
+
+    // Resolve device name to path
+    std::string resolved_path;
+    if (device_name) {
+        resolved_path = resolve_device_name(device_name);
+        if (resolved_path.empty())
+            return 1;
+        device_path = resolved_path.c_str();
     }
 
     g_verbose_mouse_events = log_output;
@@ -101,7 +162,7 @@ int main(int argc, char *argv[]) {
     // Pre-load synclient config into options BEFORE PreInit
     // so set_default_parameters() reads correct MinSpeed/MaxSpeed/AccelFactor
     if (config_path) {
-        waynaptics_preload_synclient_options(config_path, &opts->options);
+        waynaptics_preload_synclient_options(config_path, (XF86OptionPtr)opts);
     }
 
     // --- Create device structures ---
