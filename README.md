@@ -2,7 +2,7 @@
 
 ## Why? 
 
-libinput is way too opinionated to give me the **EXACT** setup I've had with Xorg. Wayland compositors also often don't provide customization UI for touchpads, so users are stuck with what's there.
+libinput is way too opinionated to give me the [**EXACT** setup I've had with Xorg](https://xkcd.com/1172/). Wayland compositors also often don't provide customization UI for touchpads, so users are stuck with what's there.
 
 ## How?
 
