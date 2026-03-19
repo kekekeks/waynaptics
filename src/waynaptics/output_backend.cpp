@@ -24,6 +24,8 @@ OutputBackend *g_output_backend = nullptr;
 
 class UinputBackend : public OutputBackend {
 public:
+    bool hires_scroll = true;
+    bool lores_scroll = true;
     bool init() override;
     void destroy() override;
     void post_motion(int dx, int dy) override;
@@ -52,10 +54,14 @@ bool UinputBackend::init() {
 
     ioctl(fd_, UI_SET_RELBIT, REL_X);
     ioctl(fd_, UI_SET_RELBIT, REL_Y);
-    ioctl(fd_, UI_SET_RELBIT, REL_WHEEL);
-    ioctl(fd_, UI_SET_RELBIT, REL_HWHEEL);
-    ioctl(fd_, UI_SET_RELBIT, REL_WHEEL_HI_RES);
-    ioctl(fd_, UI_SET_RELBIT, REL_HWHEEL_HI_RES);
+    if (lores_scroll) {
+        ioctl(fd_, UI_SET_RELBIT, REL_WHEEL);
+        ioctl(fd_, UI_SET_RELBIT, REL_HWHEEL);
+    }
+    if (hires_scroll) {
+        ioctl(fd_, UI_SET_RELBIT, REL_WHEEL_HI_RES);
+        ioctl(fd_, UI_SET_RELBIT, REL_HWHEEL_HI_RES);
+    }
 
     ioctl(fd_, UI_SET_KEYBIT, BTN_LEFT);
     ioctl(fd_, UI_SET_KEYBIT, BTN_RIGHT);
@@ -141,15 +147,17 @@ void UinputBackend::post_scroll(int scroll_type, double value, double scroll_inc
         hi_res = -hi_res;
 
     int hi_res_int = static_cast<int>(hi_res);
-    if (hi_res_int != 0)
+    if (hires_scroll && hi_res_int != 0)
         emit(EV_REL, hi_res_code, hi_res_int);
 
     // Accumulate for legacy discrete events (one click per 120 hi-res units)
     accum += hi_res;
-    int clicks = static_cast<int>(accum / 120.0);
-    if (clicks != 0) {
-        emit(EV_REL, legacy_code, clicks);
-        accum -= clicks * 120.0;
+    if (lores_scroll) {
+        int clicks = static_cast<int>(accum / 120.0);
+        if (clicks != 0) {
+            emit(EV_REL, legacy_code, clicks);
+            accum -= clicks * 120.0;
+        }
     }
 
     sync();
@@ -196,5 +204,10 @@ void DryBackend::post_scroll(int scroll_type, double value, double scroll_increm
 void DryBackend::sync() {}
 
 // Factory functions for main.cpp
-OutputBackend *waynaptics_create_uinput_backend() { return new UinputBackend(); }
+OutputBackend *waynaptics_create_uinput_backend(bool hires_scroll, bool lores_scroll) {
+    auto *b = new UinputBackend();
+    b->hires_scroll = hires_scroll;
+    b->lores_scroll = lores_scroll;
+    return b;
+}
 OutputBackend *waynaptics_create_dry_backend() { return new DryBackend(); }
