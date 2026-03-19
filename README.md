@@ -17,6 +17,13 @@ Grab your existing settings from your old X11 session using `synclient > waynapt
 
 Compile waynaptics yourself or grab a precompiled binary from releases.
 
+If you are using a package, copy your config to `/etc/waynaptics.conf` and restart the service via `systemctl restart waynaptics.service`.
+
+If you are running manually, specify the config via `-c waynaptics.conf`. 
+
+
+There are some extra options you can specify from command line:
+
 ```
 Synaptics touchpad → PS/2 mouse emulator via uinput.
 
@@ -37,7 +44,7 @@ Options:
   -h, --help            Print this help and exit
 ```
 
-config file is synclient output. The packages create a systemd unit and expect the config to be at /etc/waynaptics.conf. You might need to adjust the unit by specifying device from command line (use --device-name and get the name from evtest or smth).
+You might need to adjust the unit by specifying device from command line (use --device-name and get the name from evtest or smth).
 
 ### 3) Adjust DE settings
 
