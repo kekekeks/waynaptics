@@ -28,7 +28,7 @@ Options:
       --mouse-type <type>
                         scroll-point (default) or generic
       --scroll-factor <N>
-                        Scroll speed multiplier (default: 10 for scroll-point)
+                        Scroll speed multiplier (default: 5 for scroll-point)
       --dry             Dry mode: don't grab device, don't create uinput
       --no-hires-scroll Disable hi-res scroll events (REL_WHEEL_HI_RES)
       --no-lores-scroll Disable low-res scroll events (REL_WHEEL)

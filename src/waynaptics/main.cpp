@@ -99,7 +99,7 @@ static void print_usage(const char *prog) {
         "      --mouse-type <type>\n"
         "                        scroll-point (default) or generic\n"
         "      --scroll-factor <N>\n"
-        "                        Scroll speed multiplier (default: 10 for scroll-point)\n"
+        "                        Scroll speed multiplier (default: 5 for scroll-point)\n"
         "      --dry             Dry mode: don't grab device, don't create uinput\n"
         "      --no-hires-scroll Disable hi-res scroll events (REL_WHEEL_HI_RES)\n"
         "      --no-lores-scroll Disable low-res scroll events (REL_WHEEL)\n"
@@ -160,7 +160,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     if (scroll_factor < 0)
-        scroll_factor = is_scrollpoint ? 10.0 : 1.0;
+        scroll_factor = is_scrollpoint ? 5.0 : 1.0;
 
     if (device_path && device_name) {
         fprintf(stderr, "waynaptics: --device and --device-name are mutually exclusive\n");
