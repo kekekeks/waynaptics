@@ -26,6 +26,8 @@ class UinputBackend : public OutputBackend {
 public:
     bool hires_scroll = true;
     bool lores_scroll = true;
+    bool emulate_scrollpoint = false;
+    double scroll_factor = 1.0;
     bool init() override;
     void destroy() override;
     void post_motion(int dx, int dy) override;
@@ -61,6 +63,16 @@ bool UinputBackend::init() {
     if (hires_scroll) {
         ioctl(fd_, UI_SET_RELBIT, REL_WHEEL_HI_RES);
         ioctl(fd_, UI_SET_RELBIT, REL_HWHEEL_HI_RES);
+
+        struct uinput_abs_setup abs_setup{};
+        abs_setup.absinfo.minimum = -32767;
+        abs_setup.absinfo.maximum = 32767;
+        abs_setup.absinfo.resolution = 120;
+
+        abs_setup.code = REL_WHEEL_HI_RES;
+        ioctl(fd_, UI_ABS_SETUP, &abs_setup);
+        abs_setup.code = REL_HWHEEL_HI_RES;
+        ioctl(fd_, UI_ABS_SETUP, &abs_setup);
     }
 
     ioctl(fd_, UI_SET_KEYBIT, BTN_LEFT);
@@ -69,9 +81,15 @@ bool UinputBackend::init() {
 
     struct uinput_setup setup{};
     snprintf(setup.name, UINPUT_MAX_NAME_SIZE, "waynaptics virtual pointer");
-    setup.id.bustype = BUS_VIRTUAL;
-    setup.id.vendor = 0x1234;
-    setup.id.product = 0x5678;
+    if (emulate_scrollpoint) {
+        setup.id.bustype = BUS_USB;
+        setup.id.vendor = 0x17EF;
+        setup.id.product = 0x6049;
+    } else {
+        setup.id.bustype = BUS_VIRTUAL;
+        setup.id.vendor = 0x1234;
+        setup.id.product = 0x5678;
+    }
     setup.id.version = 1;
 
     if (ioctl(fd_, UI_DEV_SETUP, &setup) < 0) {
@@ -134,8 +152,8 @@ void UinputBackend::post_scroll(int scroll_type, double value, double scroll_inc
     if (scroll_increment == 0.0)
         return;
 
-    // Convert driver valuator delta to hi-res units (120 per detent)
-    double hi_res = (value / scroll_increment) * 120.0;
+    // Convert driver valuator delta to hi-res units (120 per detent), apply scroll factor
+    double hi_res = (value / scroll_increment) * 120.0 * scroll_factor;
 
     bool vertical = (scroll_type == SCROLL_TYPE_VERTICAL);
     uint16_t hi_res_code = vertical ? REL_WHEEL_HI_RES : REL_HWHEEL_HI_RES;
@@ -204,10 +222,13 @@ void DryBackend::post_scroll(int scroll_type, double value, double scroll_increm
 void DryBackend::sync() {}
 
 // Factory functions for main.cpp
-OutputBackend *waynaptics_create_uinput_backend(bool hires_scroll, bool lores_scroll) {
+OutputBackend *waynaptics_create_uinput_backend(bool hires_scroll, bool lores_scroll,
+                                                bool emulate_scrollpoint, double scroll_factor) {
     auto *b = new UinputBackend();
     b->hires_scroll = hires_scroll;
     b->lores_scroll = lores_scroll;
+    b->emulate_scrollpoint = emulate_scrollpoint;
+    b->scroll_factor = scroll_factor;
     return b;
 }
 OutputBackend *waynaptics_create_dry_backend() { return new DryBackend(); }

@@ -31,7 +31,8 @@ extern "C" bool waynaptics_preload_synclient_options(const char *path, XF86Optio
 // UinputBackend and DryBackend are defined in output_backend.cpp but not
 // declared in the header. Forward-declare the factory we need.
 // Since classes are defined in another TU, we create them via extern helpers.
-OutputBackend *waynaptics_create_uinput_backend(bool hires_scroll, bool lores_scroll);
+OutputBackend *waynaptics_create_uinput_backend(bool hires_scroll, bool lores_scroll,
+                                                bool emulate_scrollpoint, double scroll_factor);
 OutputBackend *waynaptics_create_dry_backend();
 
 static GMainLoop *g_main_loop_instance = nullptr;
@@ -95,6 +96,10 @@ static void print_usage(const char *prog) {
         "  -d, --device <path>   Specific evdev device path (auto-detect if omitted)\n"
         "  -n, --device-name <name>\n"
         "                        Match evdev device by name substring (e.g. \"Touchpad\")\n"
+        "      --mouse-type <type>\n"
+        "                        scroll-point (default) or generic\n"
+        "      --scroll-factor <N>\n"
+        "                        Scroll speed multiplier (default: 10 for scroll-point)\n"
         "      --dry             Dry mode: don't grab device, don't create uinput\n"
         "      --no-hires-scroll Disable hi-res scroll events (REL_WHEEL_HI_RES)\n"
         "      --no-lores-scroll Disable low-res scroll events (REL_WHEEL)\n"
@@ -111,6 +116,8 @@ int main(int argc, char *argv[]) {
     bool dry = false;
     bool hires_scroll = true;
     bool lores_scroll = true;
+    const char *mouse_type = "scroll-point";
+    double scroll_factor = -1.0;  // -1 = use default for mouse type
     bool log_evdev = false;
     bool log_output = false;
 
@@ -123,6 +130,8 @@ int main(int argc, char *argv[]) {
         {"log-output",      no_argument,       nullptr, 3},
         {"no-hires-scroll", no_argument,       nullptr, 4},
         {"no-lores-scroll", no_argument,       nullptr, 5},
+        {"mouse-type",      required_argument, nullptr, 6},
+        {"scroll-factor",   required_argument, nullptr, 7},
         {"help",        no_argument,       nullptr, 'h'},
         {nullptr, 0, nullptr, 0}
     };
@@ -138,10 +147,20 @@ int main(int argc, char *argv[]) {
             case 3:   log_output = true; break;
             case 4:   hires_scroll = false; break;
             case 5:   lores_scroll = false; break;
+            case 6:   mouse_type = optarg; break;
+            case 7:   scroll_factor = atof(optarg); break;
             case 'h': print_usage(argv[0]); return 0;
             default:  print_usage(argv[0]); return 1;
         }
     }
+
+    bool is_scrollpoint = (strcmp(mouse_type, "scroll-point") == 0);
+    if (!is_scrollpoint && strcmp(mouse_type, "generic") != 0) {
+        fprintf(stderr, "waynaptics: unknown --mouse-type '%s' (use scroll-point or generic)\n", mouse_type);
+        return 1;
+    }
+    if (scroll_factor < 0)
+        scroll_factor = is_scrollpoint ? 10.0 : 1.0;
 
     if (device_path && device_name) {
         fprintf(stderr, "waynaptics: --device and --device-name are mutually exclusive\n");
@@ -185,7 +204,8 @@ int main(int argc, char *argv[]) {
     if (dry)
         g_output_backend = waynaptics_create_dry_backend();
     else
-        g_output_backend = waynaptics_create_uinput_backend(hires_scroll, lores_scroll);
+        g_output_backend = waynaptics_create_uinput_backend(hires_scroll, lores_scroll,
+                                                            is_scrollpoint, scroll_factor);
 
     if (!g_output_backend->init()) {
         fprintf(stderr, "waynaptics: failed to initialize output backend\n");
