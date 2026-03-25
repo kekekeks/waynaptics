@@ -39,6 +39,7 @@ Options:
       --dry             Dry mode: don't grab device, don't create uinput
       --no-hires-scroll Disable hi-res scroll events (REL_WHEEL_HI_RES)
       --no-lores-scroll Disable low-res scroll events (REL_WHEEL)
+  -s, --socket <path>   Config socket path (for runtime control)
       --log-evdev       Log raw evdev touchpad events to stderr
       --log-output      Log produced mouse/scroll output events to stderr
   -h, --help            Print this help and exit
@@ -46,7 +47,22 @@ Options:
 
 You might need to adjust the unit by specifying device from command line (use --device-name and get the name from evtest or smth).
 
-### 3) Adjust DE settings
+### 3) Runtime configuration via socket
+
+If you start waynaptics with `--socket /tmp/waynaptics.sock`, you can query and modify settings at runtime using socat:
+
+```bash
+# Dump current config
+echo "get_config" | socat - UNIX-CONNECT:/tmp/waynaptics.sock
+
+# Change a setting
+echo "set_option MinSpeed=2.0" | socat - UNIX-CONNECT:/tmp/waynaptics.sock
+
+# Save current settings to the config file (requires --config)
+echo "save" | socat - UNIX-CONNECT:/tmp/waynaptics.sock
+```
+
+### 4) Adjust DE settings
 
 DISABLE mouse acceleration for your mouse, otherwise libinput will apply accel profile on top of synaptics accel profile. In KDE you can do this for individual pointer devices, not sure about other DEs.
 

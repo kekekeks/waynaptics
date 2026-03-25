@@ -82,7 +82,6 @@ this from `main.cpp`:
 | `valuators.c` | `ValuatorMask` bit-manipulation functions (C file) |
 | `supportlib.cpp` | Timer system (`TimerSet`/`TimerCancel`), `GetTimeInMillis`, misc stubs |
 | `mainloop.cpp` | GLib main loop wrapper |
-| `dump_synaptics.c` | Standalone X11 tool: reads actual XI properties from a running X server |
 
 ### Headers (`src/waynaptics/include/`)
 
@@ -148,10 +147,6 @@ Desktop environments with `disable-while-typing=true` constantly set
 `TouchpadOff=2` via XI properties. `synclient -l` reads its internal cache
 and may not reflect the actual X server state.
 
-The `waynaptics-dump` utility reads actual XI property values from the X
-server via `XGetDeviceProperty`. However, even this captures the DE's
-overrides.
-
 **Solution:** The synclient loader ignores `TouchpadOff` and
 `GrabEventDevice` from config files — these are not portable user
 preferences.
@@ -216,12 +211,10 @@ cmake .. -DCMAKE_BUILD_TYPE=Debug
 cmake --build .
 ```
 
-Produces two executables:
+Produces one executable:
 - `waynaptics` — the main emulator
-- `waynaptics-dump` — standalone X11 utility to dump actual XI properties
 
-Dependencies: `libevdev`, `glib-2.0`, `libX11`, `libXi` (last two only for
-waynaptics-dump).
+Dependencies: `libevdev`, `glib-2.0`.
 
 Key CMake settings:
 - `-DBUILD_EVENTCOMM` — enables the evdev backend in the driver
@@ -241,7 +234,4 @@ waynaptics -d /dev/input/event5 --config synclient.txt
 
 # Safe testing (no grab, no uinput, logs to stderr):
 waynaptics --dry --log-output
-
-# Generate a config from the running X server:
-waynaptics-dump > my-config.txt
 ```

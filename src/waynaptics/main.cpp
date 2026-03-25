@@ -16,6 +16,8 @@
 #include "include/output_backend.h"
 #include "include/ptrveloc.h"
 #include "include/options.h"
+#include "include/synclient_loader.h"
+#include "include/config_socket.h"
 
 extern "C" {
     extern InputDriverRec SYNAPTICS;
@@ -24,9 +26,6 @@ extern "C" {
 extern bool g_verbose_mouse_events;  // defined in event_posting.cpp
 
 bool g_verbose_evdev_events = false;
-
-extern "C" bool waynaptics_load_synclient_config(const char *path, DeviceIntPtr dev);
-extern "C" bool waynaptics_preload_synclient_options(const char *path, XF86OptionPtr opts);
 
 // UinputBackend and DryBackend are defined in output_backend.cpp but not
 // declared in the header. Forward-declare the factory we need.
@@ -103,6 +102,7 @@ static void print_usage(const char *prog) {
         "      --dry             Dry mode: don't grab device, don't create uinput\n"
         "      --no-hires-scroll Disable hi-res scroll events (REL_WHEEL_HI_RES)\n"
         "      --no-lores-scroll Disable low-res scroll events (REL_WHEEL)\n"
+        "  -s, --socket <path>   Config socket path (for runtime control)\n"
         "      --log-evdev       Log raw evdev touchpad events to stderr\n"
         "      --log-output      Log produced mouse/scroll output events to stderr\n"
         "  -h, --help            Print this help and exit\n",
@@ -113,6 +113,7 @@ int main(int argc, char *argv[]) {
     const char *config_path = nullptr;
     const char *device_path = nullptr;
     const char *device_name = nullptr;
+    const char *socket_path = nullptr;
     bool dry = false;
     bool hires_scroll = true;
     bool lores_scroll = true;
@@ -125,6 +126,7 @@ int main(int argc, char *argv[]) {
         {"config",      required_argument, nullptr, 'c'},
         {"device",      required_argument, nullptr, 'd'},
         {"device-name", required_argument, nullptr, 'n'},
+        {"socket",      required_argument, nullptr, 's'},
         {"dry",             no_argument,       nullptr, 1},
         {"log-evdev",       no_argument,       nullptr, 2},
         {"log-output",      no_argument,       nullptr, 3},
@@ -137,11 +139,12 @@ int main(int argc, char *argv[]) {
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "c:d:n:h", long_options, nullptr)) != -1) {
+    while ((opt = getopt_long(argc, argv, "c:d:n:s:h", long_options, nullptr)) != -1) {
         switch (opt) {
             case 'c': config_path = optarg; break;
             case 'd': device_path = optarg; break;
             case 'n': device_name = optarg; break;
+            case 's': socket_path = optarg; break;
             case 1:   dry = true; break;
             case 2:   log_evdev = true; break;
             case 3:   log_output = true; break;
@@ -264,6 +267,11 @@ int main(int argc, char *argv[]) {
     sigaction(SIGTERM, &sa, nullptr);
 
     fprintf(stderr, "waynaptics: running (dry=%s)...\n", dry ? "yes" : "no");
+
+    // --- Config socket ---
+    if (socket_path) {
+        waynaptics_config_socket_start(socket_path, config_path, &devRec);
+    }
 
     // --- GLib main loop ---
     g_main_context_acquire(g_main_context_default());

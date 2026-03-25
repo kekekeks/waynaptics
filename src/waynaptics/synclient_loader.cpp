@@ -1,6 +1,7 @@
 #include "shim.h"
 #include "include/synshared.h"
 #include "include/xi_properties.h"
+#include "include/synclient_loader.h"
 #include "include/options.h"
 #include <synaptics-properties.h>
 #include <cstdio>
@@ -249,4 +250,85 @@ extern "C" bool waynaptics_load_synclient_config(const char *path, DeviceIntPtr 
     }
 
     return true;
+}
+
+extern "C" const char *waynaptics_apply_option(const char *name, const char *value, DeviceIntPtr dev) {
+    static char errbuf[256];
+
+    if (strcmp(name, "GrabEventDevice") == 0 || strcmp(name, "TouchpadOff") == 0) {
+        snprintf(errbuf, sizeof(errbuf), "parameter '%s' is not supported", name);
+        return errbuf;
+    }
+
+    const ParamMapping *mapping = find_param(name);
+    if (!mapping) {
+        snprintf(errbuf, sizeof(errbuf), "unknown parameter '%s'", name);
+        return errbuf;
+    }
+
+    Atom prop_atom = XIGetKnownProperty(mapping->prop_name);
+    if (prop_atom == 0) {
+        snprintf(errbuf, sizeof(errbuf), "property '%s' not registered", mapping->prop_name);
+        return errbuf;
+    }
+
+    XIPropertyValuePtr val = waynaptics_get_property_value(prop_atom);
+    if (!val || !val->data) {
+        snprintf(errbuf, sizeof(errbuf), "property '%s' has no value", mapping->prop_name);
+        return errbuf;
+    }
+
+    if (mapping->format == 0) {
+        char *endptr;
+        double dval = strtod(value, &endptr);
+        if (endptr == value) {
+            snprintf(errbuf, sizeof(errbuf), "invalid float value '%s'", value);
+            return errbuf;
+        }
+        ((float *)val->data)[mapping->offset] = (float)dval;
+    } else {
+        char *endptr;
+        long ival = strtol(value, &endptr, 10);
+        if (endptr == value) {
+            snprintf(errbuf, sizeof(errbuf), "invalid integer value '%s'", value);
+            return errbuf;
+        }
+        switch (mapping->format) {
+            case 8:  ((uint8_t *)val->data)[mapping->offset] = (uint8_t)ival; break;
+            case 16: ((uint16_t *)val->data)[mapping->offset] = (uint16_t)ival; break;
+            case 32: ((int32_t *)val->data)[mapping->offset] = (int32_t)ival; break;
+            default:
+                snprintf(errbuf, sizeof(errbuf), "unexpected format %d", mapping->format);
+                return errbuf;
+        }
+    }
+
+    waynaptics_call_set_property_handler(dev, prop_atom, val, FALSE);
+    return nullptr;
+}
+
+extern "C" void waynaptics_dump_config(void (*emit_line)(const char *line, void *ctx), void *ctx) {
+    char buf[256];
+    for (const ParamMapping *p = params; p->name != nullptr; p++) {
+        Atom prop_atom = XIGetKnownProperty(p->prop_name);
+        if (prop_atom == 0)
+            continue;
+        XIPropertyValuePtr val = waynaptics_get_property_value(prop_atom);
+        if (!val || !val->data)
+            continue;
+
+        if (p->format == 0) {
+            float fval = ((float *)val->data)[p->offset];
+            snprintf(buf, sizeof(buf), "    %-24s = %g", p->name, fval);
+        } else {
+            long ival = 0;
+            switch (p->format) {
+                case 8:  ival = ((uint8_t *)val->data)[p->offset]; break;
+                case 16: ival = ((uint16_t *)val->data)[p->offset]; break;
+                case 32: ival = ((int32_t *)val->data)[p->offset]; break;
+            }
+            snprintf(buf, sizeof(buf), "    %-24s = %ld", p->name, ival);
+        }
+        emit_line(buf, ctx);
+    }
 }
