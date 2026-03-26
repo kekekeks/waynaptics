@@ -1,6 +1,7 @@
 #include "include/synshared.h"
 #include "include/config_socket.h"
 #include "include/synclient_loader.h"
+#include "include/xi_properties.h"
 #include <glib.h>
 #include <cstdio>
 #include <cstdarg>
@@ -51,6 +52,33 @@ static void emit_to_file(const char *line, void *ctx) {
 
 static void handle_command(ClientContext *client, const std::string &cmd) {
     fprintf(stderr, "[SOCKET] command: %s\n", cmd.c_str());
+
+    if (cmd == "get_capabilities") {
+        Atom cap_atom = XIGetKnownProperty("Synaptics Capabilities");
+        if (cap_atom == 0) {
+            sock_reply(client->fd, "FAIL property not registered\n");
+            fprintf(stderr, "[SOCKET] get_capabilities: property not registered\n");
+            return;
+        }
+        XIPropertyValuePtr val = waynaptics_get_property_value(cap_atom);
+        if (!val || !val->data || val->size < 7) {
+            sock_reply(client->fd, "FAIL property has no data\n");
+            fprintf(stderr, "[SOCKET] get_capabilities: no data\n");
+            return;
+        }
+        uint8_t *caps = (uint8_t *)val->data;
+        static const char *cap_names[] = {
+            "HasLeftButton", "HasMiddleButton", "HasRightButton",
+            "TwoFingerDetection", "ThreeFingerDetection",
+            "PressureDetection", "FingerOrPalmWidthDetection"
+        };
+        for (int i = 0; i < 7; i++)
+            sock_reply(client->fd, "    %-24s = %d\n", cap_names[i], caps[i]);
+        close(client->fd);
+        client->fd = -1;
+        fprintf(stderr, "[SOCKET] get_capabilities: dumped and closed\n");
+        return;
+    }
 
     if (cmd == "get_config") {
         waynaptics_dump_config(emit_to_fd, &client->fd);
