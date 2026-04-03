@@ -1,8 +1,9 @@
-# Waynaptics - synaptics "driver" for Wayland
+# Waynaptics - the missing touchpad configurator for for Wayland
 
 
 https://github.com/user-attachments/assets/20bf44ec-e314-4620-a80b-600fe9c89d7e
 
+Waynaptics is a port of Synaptics touchpad driver and advanced touchpad configuration tool that's compatible with any Wayland session that uses evdev devices for input.
 
 ## Why? 
 
