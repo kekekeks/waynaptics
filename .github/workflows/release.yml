@@ -36,5 +36,8 @@ jobs:
           files: |
             artifacts/waynaptics
             artifacts/waynaptics.deb
+            artifacts/waynaptics-config.deb
             artifacts/waynaptics.rpm
+            artifacts/waynaptics-config.rpm
+            artifacts/waynaptics-*.pkg.tar.zst
             artifacts/waynaptics.tar.gz
