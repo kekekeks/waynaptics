@@ -5,11 +5,11 @@
 
 ## Why? 
 
-libinput is way too opinionated to give me the [**EXACT** setup I've had with Xorg](https://xkcd.com/1172/). Wayland compositors also often don't provide customization UI for touchpads, so users are stuck with what's there.
+libinput is way too opinionated to give me the [**EXACT**](https://xkcd.com/1172/) setup I've had with Xorg. Wayland compositors also often don't provide customization UI for touchpads, so users are stuck with what's there.
 
 ## How?
 
-Waynaptics implements the minimal set of Xorg APIs to run the original synaptics driver without an actual Xorg. On start it grabs your touchpad device, feeds it to synaptics driver and then feeds its output to an emulated a Lenovo ScrollPoint mouse using uinput. This particular model is used because it has hacks in libinput codebase to enable smooth scrolling with wheel.
+Waynaptics implements the minimal set of Xorg APIs to run the original synaptics driver without an actual Xorg. On start it grabs your touchpad device, feeds it to synaptics driver and then feeds its output to an emulated Lenovo ScrollPoint mouse using uinput. This particular model is used because it has hacks in libinput codebase to enable smooth scrolling with wheel.
 
 ## How to install
 
