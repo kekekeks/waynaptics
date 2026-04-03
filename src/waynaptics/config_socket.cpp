@@ -14,6 +14,7 @@
 #include <unistd.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/stat.h>
 #include <signal.h>
 
 struct ClientContext;
@@ -287,6 +288,9 @@ extern "C" void waynaptics_config_socket_start(const char *socket_path,
         close(fd);
         return;
     }
+
+    // Allow non-root users to connect to the config socket
+    chmod(socket_path, 0666);
 
     if (listen(fd, 4) < 0) {
         fprintf(stderr, "[SOCKET] Failed to listen: %m\n");
