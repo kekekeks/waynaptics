@@ -1,6 +1,7 @@
 # Waynaptics - synaptics "driver" for Wayland
 
-![](images/waynaptics-config.mp4)
+
+https://github.com/user-attachments/assets/20bf44ec-e314-4620-a80b-600fe9c89d7e
 
 
 ## Why? 
