@@ -2,28 +2,38 @@
 #include "include/config_socket.h"
 #include "include/synclient_loader.h"
 #include "include/xi_properties.h"
+#include "include/touch_state.h"
 #include <glib.h>
 #include <cstdio>
 #include <cstdarg>
 #include <cstring>
 #include <cstdlib>
 #include <string>
+#include <vector>
+#include <algorithm>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <signal.h>
 
+struct ClientContext;
+
 struct SocketContext {
     int listen_fd;
     const char *config_path;
     DeviceIntPtr dev;
+    std::vector<ClientContext *> touch_subscribers;
 };
 
 struct ClientContext {
     int fd;
     std::string buf;
     SocketContext *srv;
+    bool subscribed_touches = false;
 };
+
+static SocketContext *g_socket_ctx = nullptr;
+static WaynapticsTouchState g_last_touch_state = {};
 
 static void sock_reply(int fd, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
 static void sock_reply(int fd, const char *fmt, ...) {
@@ -88,6 +98,22 @@ static void handle_command(ClientContext *client, const std::string &cmd) {
         return;
     }
 
+    if (cmd == "get_dimensions") {
+        int minx, maxx, miny, maxy;
+        if (waynaptics_get_dimensions(client->srv->dev, &minx, &maxx, &miny, &maxy)) {
+            sock_reply(client->fd, "    %-24s = %d\n", "MinX", minx);
+            sock_reply(client->fd, "    %-24s = %d\n", "MaxX", maxx);
+            sock_reply(client->fd, "    %-24s = %d\n", "MinY", miny);
+            sock_reply(client->fd, "    %-24s = %d\n", "MaxY", maxy);
+        } else {
+            sock_reply(client->fd, "FAIL dimensions not available\n");
+        }
+        close(client->fd);
+        client->fd = -1;
+        fprintf(stderr, "[SOCKET] get_dimensions: dumped and closed\n");
+        return;
+    }
+
     if (cmd.rfind("set_option ", 0) == 0) {
         std::string arg = cmd.substr(11);
         size_t eq = arg.find('=');
@@ -133,19 +159,56 @@ static void handle_command(ClientContext *client, const std::string &cmd) {
         return;
     }
 
+    if (cmd == "reload") {
+        // First restore to initial defaults (snapshot taken at startup)
+        waynaptics_restore_initial_config(client->srv->dev);
+
+        // Then re-apply config file on top (if available)
+        if (client->srv->config_path) {
+            if (!waynaptics_load_synclient_config(client->srv->config_path, client->srv->dev)) {
+                sock_reply(client->fd, "FAIL failed to reload config from %s\n", client->srv->config_path);
+                fprintf(stderr, "[SOCKET] reload: failed to reload from %s\n", client->srv->config_path);
+                return;
+            }
+        }
+        sock_reply(client->fd, "OK\n");
+        fprintf(stderr, "[SOCKET] reload: restored defaults + config from %s\n",
+                client->srv->config_path ? client->srv->config_path : "(none)");
+        return;
+    }
+
+    if (cmd == "subscribe_touches") {
+        if (!client->subscribed_touches) {
+            client->subscribed_touches = true;
+            client->srv->touch_subscribers.push_back(client);
+            fprintf(stderr, "[SOCKET] subscribe_touches: fd=%d subscribed\n", client->fd);
+        }
+        sock_reply(client->fd, "OK\n");
+        return;
+    }
+
     sock_reply(client->fd, "FAIL unknown command\n");
     fprintf(stderr, "[SOCKET] unknown command: %s\n", cmd.c_str());
+}
+
+static void remove_subscriber(ClientContext *client) {
+    if (client->subscribed_touches && client->srv) {
+        auto &subs = client->srv->touch_subscribers;
+        subs.erase(std::remove(subs.begin(), subs.end(), client), subs.end());
+    }
 }
 
 static gboolean on_client_data(GIOChannel *source, GIOCondition cond, gpointer data) {
     auto *client = static_cast<ClientContext *>(data);
 
     if (client->fd < 0) {
+        remove_subscriber(client);
         delete client;
         return FALSE;
     }
 
     if (cond & (G_IO_HUP | G_IO_ERR | G_IO_NVAL)) {
+        remove_subscriber(client);
         close(client->fd);
         delete client;
         return FALSE;
@@ -154,6 +217,7 @@ static gboolean on_client_data(GIOChannel *source, GIOCondition cond, gpointer d
     char buf[1024];
     ssize_t n = read(client->fd, buf, sizeof(buf));
     if (n <= 0) {
+        remove_subscriber(client);
         close(client->fd);
         delete client;
         return FALSE;
@@ -235,9 +299,57 @@ extern "C" void waynaptics_config_socket_start(const char *socket_path,
     srv->config_path = config_path;
     srv->dev = dev;
 
+    g_socket_ctx = srv;
+
     GIOChannel *ch = g_io_channel_unix_new(fd);
     g_io_add_watch(ch, G_IO_IN, on_new_connection, srv);
     g_io_channel_unref(ch);
 
     fprintf(stderr, "waynaptics: config socket at %s\n", socket_path);
+}
+
+extern "C" void waynaptics_broadcast_touches(DeviceIntPtr dev) {
+    if (!g_socket_ctx || g_socket_ctx->touch_subscribers.empty())
+        return;
+
+    WaynapticsTouchState state = {};
+    waynaptics_get_touch_state(dev, &state);
+
+    // Compare with previous state to avoid spamming unchanged data
+    if (state.num_contacts == g_last_touch_state.num_contacts) {
+        bool same = true;
+        for (int i = 0; i < state.num_contacts && same; i++) {
+            same = (state.contacts[i].x == g_last_touch_state.contacts[i].x &&
+                    state.contacts[i].y == g_last_touch_state.contacts[i].y &&
+                    state.contacts[i].z == g_last_touch_state.contacts[i].z &&
+                    state.contacts[i].active == g_last_touch_state.contacts[i].active);
+        }
+        if (same)
+            return;
+    }
+    g_last_touch_state = state;
+
+    // Build message: "TOUCHES <count>\n<x> <y> <z>\n...\nEND\n"
+    char msg[512];
+    int offset = snprintf(msg, sizeof(msg), "TOUCHES %d\n", state.num_contacts);
+    for (int i = 0; i < state.num_contacts && offset < (int)sizeof(msg) - 32; i++) {
+        offset += snprintf(msg + offset, sizeof(msg) - offset, "%d %d %d\n",
+                           state.contacts[i].x, state.contacts[i].y, state.contacts[i].z);
+    }
+    offset += snprintf(msg + offset, sizeof(msg) - offset, "END\n");
+
+    // Broadcast to all subscribers, removing dead ones
+    auto &subs = g_socket_ctx->touch_subscribers;
+    for (auto it = subs.begin(); it != subs.end(); ) {
+        ClientContext *c = *it;
+        ssize_t sent = send(c->fd, msg, offset, MSG_NOSIGNAL);
+        if (sent <= 0) {
+            c->subscribed_touches = false;
+            close(c->fd);
+            c->fd = -1;
+            it = subs.erase(it);
+        } else {
+            ++it;
+        }
+    }
 }

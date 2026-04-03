@@ -332,3 +332,37 @@ extern "C" void waynaptics_dump_config(void (*emit_line)(const char *line, void 
         emit_line(buf, ctx);
     }
 }
+
+// Initial config snapshot: stores name→value pairs captured after DEVICE_INIT
+static std::map<std::string, std::string> g_initial_config;
+
+static void snapshot_emit(const char *line, void *ctx) {
+    auto *map = static_cast<std::map<std::string, std::string>*>(ctx);
+    std::string l(line);
+    auto eq = l.find('=');
+    if (eq == std::string::npos)
+        return;
+    std::string name = l.substr(0, eq);
+    std::string value = l.substr(eq + 1);
+    // trim whitespace
+    while (!name.empty() && name.front() == ' ') name.erase(0, 1);
+    while (!name.empty() && name.back() == ' ') name.pop_back();
+    while (!value.empty() && value.front() == ' ') value.erase(0, 1);
+    while (!value.empty() && value.back() == ' ') value.pop_back();
+    (*map)[name] = value;
+}
+
+extern "C" void waynaptics_snapshot_initial_config(void) {
+    g_initial_config.clear();
+    waynaptics_dump_config(snapshot_emit, &g_initial_config);
+    fprintf(stderr, "[CONFIG] Snapshot: captured %zu initial parameter values\n",
+            g_initial_config.size());
+}
+
+extern "C" void waynaptics_restore_initial_config(DeviceIntPtr dev) {
+    fprintf(stderr, "[CONFIG] Restoring %zu initial parameter values\n",
+            g_initial_config.size());
+    for (const auto &[name, value] : g_initial_config) {
+        waynaptics_apply_option(name.c_str(), value.c_str(), dev);
+    }
+}

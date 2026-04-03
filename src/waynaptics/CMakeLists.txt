@@ -27,6 +27,8 @@ add_executable(waynaptics main.cpp
         mainloop.cpp
         include/mainloop.h
         valuators.c
+        dimensions.c
+        touch_state.c
         fakeclude/xf86Module.h
         atoms.cpp
         options.cpp

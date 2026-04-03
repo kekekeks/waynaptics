@@ -1,5 +1,6 @@
 #include "synshared.h"
 #include "include/options.h"
+#include "include/touch_state.h"
 #include <glib.h>
 #include <map>
 #include <string>
@@ -12,6 +13,7 @@ static gboolean io_watch_callback(GIOChannel *source, GIOCondition condition, gp
 {
     auto pInfo = static_cast<InputInfoPtr>(data);
     pInfo->read_input(pInfo);
+    waynaptics_broadcast_touches(pInfo->dev);
     return G_SOURCE_CONTINUE;
 }
 

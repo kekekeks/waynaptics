@@ -241,6 +241,9 @@ int main(int argc, char *argv[]) {
     // --- Initialize pointer acceleration (after driver registered its profile) ---
     waynaptics_accel_init();
 
+    // --- Snapshot initial config (hardware defaults + pre-loaded options) ---
+    waynaptics_snapshot_initial_config();
+
     // --- Load synclient config (after properties are initialized) ---
     if (config_path) {
         if (!waynaptics_load_synclient_config(config_path, &devRec)) {

@@ -17,6 +17,16 @@ const char *waynaptics_apply_option(const char *name, const char *value, DeviceI
 // The callback is called once per line (without trailing newline).
 void waynaptics_dump_config(void (*emit_line)(const char *line, void *ctx), void *ctx);
 
+// Get touchpad axis dimensions.
+// Returns false if dimensions are not available.
+bool waynaptics_get_dimensions(DeviceIntPtr dev, int *minx, int *maxx, int *miny, int *maxy);
+
+// Snapshot all current parameter values (call after DEVICE_INIT, before config load).
+void waynaptics_snapshot_initial_config(void);
+
+// Restore all parameters to the initial snapshot values.
+void waynaptics_restore_initial_config(DeviceIntPtr dev);
+
 #ifdef __cplusplus
 }
 #endif
