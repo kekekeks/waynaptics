@@ -6,6 +6,7 @@
 #include <QCheckBox>
 #include <QSpinBox>
 #include <QDoubleSpinBox>
+#include <QAbstractSpinBox>
 #include <QComboBox>
 #include <QGroupBox>
 #include <QFormLayout>
@@ -14,6 +15,27 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QScrollArea>
+#include <QEvent>
+#include <QScrollBar>
+#include <QCoreApplication>
+
+// Blocks mouse wheel on spinboxes/comboboxes, forwards to scroll bar
+class WheelBlocker : public QObject
+{
+public:
+    explicit WheelBlocker(QAbstractScrollArea *scrollArea)
+        : QObject(scrollArea), m_scrollArea(scrollArea) {}
+    bool eventFilter(QObject *, QEvent *e) override {
+        if (e->type() == QEvent::Wheel) {
+            if (auto *bar = m_scrollArea->verticalScrollBar())
+                QCoreApplication::sendEvent(bar, e);
+            return true;
+        }
+        return false;
+    }
+private:
+    QAbstractScrollArea *m_scrollArea;
+};
 
 // Convert device coordinate to visual percentage (0-100)
 static int deviceToVisualEdge(int deviceVal, int minDev, int maxDev)
@@ -191,6 +213,18 @@ ScrollingTab::ScrollingTab(ConfigModel *model, TouchSubscriber *touchSub,
     contentLayout->addStretch();
     scrollArea->setWidget(scrollContent);
     layout->addWidget(scrollArea);
+
+    // Block mouse wheel on spinboxes/comboboxes
+    auto *wb = new WheelBlocker(scrollArea);
+    for (auto *sb : std::initializer_list<QAbstractSpinBox*>{
+             m_vertScrollDelta, m_horizScrollDelta,
+             m_leftEdge, m_rightEdge, m_topEdge, m_bottomEdge,
+             m_circScrollDelta, m_coastingSpeed, m_coastingFriction}) {
+        sb->setFocusPolicy(Qt::StrongFocus);
+        sb->installEventFilter(wb);
+    }
+    m_circScrollTrigger->setFocusPolicy(Qt::StrongFocus);
+    m_circScrollTrigger->installEventFilter(wb);
 
     populate();
 
