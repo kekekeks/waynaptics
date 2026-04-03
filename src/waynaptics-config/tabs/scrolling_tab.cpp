@@ -43,7 +43,6 @@ ScrollingTab::ScrollingTab(ConfigModel *model, TouchSubscriber *touchSub,
     // Wrap scrollable content
     auto *scrollArea = new QScrollArea(this);
     scrollArea->setWidgetResizable(true);
-    scrollArea->setFrameShape(QFrame::NoFrame);
     auto *scrollContent = new QWidget(scrollArea);
     auto *contentLayout = new QVBoxLayout(scrollContent);
 
