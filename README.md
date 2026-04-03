@@ -1,5 +1,8 @@
 # Waynaptics - synaptics "driver" for Wayland
 
+![](images/waynaptics-config.mp4)
+
+
 ## Why? 
 
 libinput is way too opinionated to give me the [**EXACT** setup I've had with Xorg](https://xkcd.com/1172/). Wayland compositors also often don't provide customization UI for touchpads, so users are stuck with what's there.
@@ -76,7 +79,14 @@ Options:
 
 You might need to adjust the unit by specifying device from command line (use --device-name and get the name from evtest or smth).
 
-### Runtime configuration via socket
+### Adjust DE settings
+
+DISABLE mouse acceleration for your mouse, otherwise libinput will apply accel profile on top of synaptics accel profile. In KDE you can do this for individual pointer devices, not sure about other DEs.
+
+![](images/waynaptics-config-kde.png)
+
+
+### Scripting configuration via socket
 
 If you start waynaptics with `--socket /var/run/waynaptics.sock` (the default for the systemd service), you can query and modify settings at runtime. The configuration tool uses this socket. You can also use socat directly:
 
@@ -91,7 +101,4 @@ echo "set_option MinSpeed=2.0" | socat - UNIX-CONNECT:/var/run/waynaptics.sock
 echo "save" | socat - UNIX-CONNECT:/var/run/waynaptics.sock
 ```
 
-### Adjust DE settings
-
-DISABLE mouse acceleration for your mouse, otherwise libinput will apply accel profile on top of synaptics accel profile. In KDE you can do this for individual pointer devices, not sure about other DEs.
 
