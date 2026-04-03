@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Waynaptics Configuration
+Comment=Configure Synaptics touchpad settings
+Exec=waynaptics-config
+Icon=input-touchpad
+Terminal=false
+Type=Application
+Categories=Settings;HardwareSettings;
+Keywords=touchpad;synaptics;mouse;trackpad;

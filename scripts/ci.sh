@@ -12,6 +12,9 @@ bash "$SCRIPT_DIR/package-deb.sh"
 echo "=== Building RPM package ==="
 bash "$SCRIPT_DIR/package-rpm.sh"
 
+echo "=== Building Arch package ==="
+bash "$SCRIPT_DIR/package-arch.sh"
+
 echo "=== Building tarball ==="
 bash "$SCRIPT_DIR/package-tar.sh"
 

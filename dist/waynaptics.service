@@ -4,7 +4,7 @@ After=local-fs.target
 
 [Service]
 Type=simple
-ExecStart=/opt/waynaptics/bin/waynaptics --config /etc/waynaptics.conf
+ExecStart=/usr/bin/waynaptics --config /etc/waynaptics.conf --socket /var/run/waynaptics.sock
 Restart=on-failure
 RestartSec=3
 

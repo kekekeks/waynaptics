@@ -31,4 +31,6 @@ target_link_libraries(waynaptics-config PRIVATE
     Qt6::Network
 )
 
-install(TARGETS waynaptics-config RUNTIME DESTINATION bin)
+install(TARGETS waynaptics-config RUNTIME DESTINATION bin COMPONENT config)
+install(FILES ${CMAKE_SOURCE_DIR}/dist/waynaptics-config.desktop
+        DESTINATION share/applications COMPONENT config)

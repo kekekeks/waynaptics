@@ -10,5 +10,5 @@ exec docker run -t --rm \
   -v "$REPO_DIR:/io" \
   -e HOST_UID="$(id -u)" \
   -e HOST_GID="$(id -g)" \
-  debian:11 \
+  debian:12 \
   bash /io/scripts/compile-inner.sh

@@ -47,3 +47,7 @@ add_executable(waynaptics main.cpp
         include/config_socket.h)
 target_include_directories(waynaptics PRIVATE include fakeclude ../../external/xf86-input-synaptics/include ../../external/xf86-input-synaptics/src ${LIBEVDEV_INCLUDE_DIRS} ${GLIB_INCLUDE_DIRS})
 target_link_libraries(waynaptics PRIVATE ${LIBEVDEV_LIBRARIES} ${GLIB_LDFLAGS})
+
+install(TARGETS waynaptics RUNTIME DESTINATION bin COMPONENT daemon)
+install(FILES ${CMAKE_SOURCE_DIR}/dist/waynaptics.service
+        DESTINATION lib/systemd/system COMPONENT daemon)
