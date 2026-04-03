@@ -9,6 +9,10 @@
 
 bool g_verbose_mouse_events = false;
 
+// Accumulate fractional remainders so sub-pixel motion isn't lost
+static double g_frac_dx = 0.0;
+static double g_frac_dy = 0.0;
+
 extern "C" void
 xf86PostMotionEvent(DeviceIntPtr dev, int is_absolute,
                     int first_valuator, int num_valuators, ...)
@@ -28,8 +32,14 @@ xf86PostMotionEvent(DeviceIntPtr dev, int is_absolute,
     /* Apply pointer acceleration (velocity tracking + profile) */
     waynaptics_accel_apply(dev, &dx, &dy);
 
-    int out_dx = (int)round(dx);
-    int out_dy = (int)round(dy);
+    g_frac_dx += dx;
+    g_frac_dy += dy;
+
+    int out_dx = (int)trunc(g_frac_dx);
+    int out_dy = (int)trunc(g_frac_dy);
+
+    g_frac_dx -= out_dx;
+    g_frac_dy -= out_dy;
 
     if (g_verbose_mouse_events)
         fprintf(stderr, "[MOUSE] motion raw=%d,%d accel=%d,%d\n",
