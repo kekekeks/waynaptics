@@ -16,12 +16,14 @@
 #include <sys/un.h>
 #include <sys/stat.h>
 #include <signal.h>
+#include <cerrno>
 
 struct ClientContext;
 
 struct SocketContext {
     int listen_fd;
     const char *config_path;
+    const char *runtime_config_path;  // writable save target (falls back to config_path)
     DeviceIntPtr dev;
     std::vector<ClientContext *> touch_subscribers;
 };
@@ -141,30 +143,34 @@ static void handle_command(ClientContext *client, const std::string &cmd) {
     }
 
     if (cmd == "save") {
-        if (!client->srv->config_path) {
+        const char *save_path = client->srv->runtime_config_path
+            ? client->srv->runtime_config_path
+            : client->srv->config_path;
+        if (!save_path) {
             sock_reply(client->fd, "FAIL no config file specified\n");
             fprintf(stderr, "[SOCKET] save: no config file\n");
             return;
         }
-        FILE *f = fopen(client->srv->config_path, "w");
+        FILE *f = fopen(save_path, "w");
         if (!f) {
-            sock_reply(client->fd, "FAIL cannot open %s for writing\n", client->srv->config_path);
-            fprintf(stderr, "[SOCKET] save: cannot open %s\n", client->srv->config_path);
+            sock_reply(client->fd, "FAIL cannot open %s for writing: %s\n",
+                       save_path, strerror(errno));
+            fprintf(stderr, "[SOCKET] save: cannot open %s: %s\n",
+                    save_path, strerror(errno));
             return;
         }
-        int file_fd = fileno(f);
         waynaptics_dump_config(emit_to_file, f);
         fclose(f);
         sock_reply(client->fd, "OK\n");
-        fprintf(stderr, "[SOCKET] save: wrote to %s\n", client->srv->config_path);
+        fprintf(stderr, "[SOCKET] save: wrote to %s\n", save_path);
         return;
     }
 
     if (cmd == "reload") {
-        // First restore to initial defaults (snapshot taken at startup)
+        // Restore to initial defaults (snapshot taken at startup before any config load)
         waynaptics_restore_initial_config(client->srv->dev);
 
-        // Then re-apply config file on top (if available)
+        // Re-apply system config (if available)
         if (client->srv->config_path) {
             if (!waynaptics_load_synclient_config(client->srv->config_path, client->srv->dev)) {
                 sock_reply(client->fd, "FAIL failed to reload config from %s\n", client->srv->config_path);
@@ -172,9 +178,17 @@ static void handle_command(ClientContext *client, const std::string &cmd) {
                 return;
             }
         }
+        // Apply runtime config overrides (if different and exists)
+        const char *rt = client->srv->runtime_config_path;
+        if (rt && (!client->srv->config_path || strcmp(rt, client->srv->config_path) != 0)) {
+            if (access(rt, R_OK) == 0) {
+                if (!waynaptics_load_synclient_config(rt, client->srv->dev)) {
+                    fprintf(stderr, "[SOCKET] reload: warning: failed to reload runtime config from %s\n", rt);
+                }
+            }
+        }
         sock_reply(client->fd, "OK\n");
-        fprintf(stderr, "[SOCKET] reload: restored defaults + config from %s\n",
-                client->srv->config_path ? client->srv->config_path : "(none)");
+        fprintf(stderr, "[SOCKET] reload: restored defaults + config\n");
         return;
     }
 
@@ -267,6 +281,7 @@ static gboolean on_new_connection(GIOChannel *source, GIOCondition cond, gpointe
 
 extern "C" void waynaptics_config_socket_start(const char *socket_path,
                                                const char *config_path,
+                                               const char *runtime_config_path,
                                                DeviceIntPtr dev) {
     // Ignore SIGPIPE so broken client connections don't kill us
     signal(SIGPIPE, SIG_IGN);
@@ -301,6 +316,7 @@ extern "C" void waynaptics_config_socket_start(const char *socket_path,
     auto *srv = new SocketContext();
     srv->listen_fd = fd;
     srv->config_path = config_path;
+    srv->runtime_config_path = runtime_config_path;
     srv->dev = dev;
 
     g_socket_ctx = srv;

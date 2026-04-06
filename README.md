@@ -73,6 +73,10 @@ Options:
       --no-hires-scroll Disable hi-res scroll events (REL_WHEEL_HI_RES)
       --no-lores-scroll Disable low-res scroll events (REL_WHEEL)
   -s, --socket <path>   Config socket path (for runtime control)
+      --drop-user <user>
+                        Drop privileges to this user after setup
+      --runtime-config <file>
+                        Writable config for save (default: same as --config)
       --log-evdev       Log raw evdev touchpad events to stderr
       --log-output      Log produced mouse/scroll output events to stderr
   -h, --help            Print this help and exit

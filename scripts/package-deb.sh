@@ -40,6 +40,12 @@ EOF
 cat > "$STAGING/DEBIAN/postinst" << 'EOF'
 #!/bin/bash
 set -e
+# Create waynaptics system user for privilege dropping
+if ! getent passwd waynaptics >/dev/null 2>&1; then
+    useradd --system --no-create-home --shell /usr/sbin/nologin waynaptics
+fi
+# Create runtime config directory
+install -d -o waynaptics -g waynaptics -m 0755 /var/lib/waynaptics
 systemctl daemon-reload
 systemctl enable waynaptics.service
 systemctl start waynaptics.service || true

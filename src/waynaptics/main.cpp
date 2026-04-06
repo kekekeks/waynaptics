@@ -10,6 +10,10 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
+#include <sys/prctl.h>
+#include <sys/types.h>
+#include <grp.h>
+#include <pwd.h>
 #include <linux/input.h>
 
 #include "include/synshared.h"
@@ -84,6 +88,35 @@ static std::string resolve_device_name(const char *name) {
     return result;
 }
 
+static bool drop_privileges(const char *username) {
+    struct passwd *pw = getpwnam(username);
+    if (!pw) {
+        fprintf(stderr, "waynaptics: user '%s' not found\n", username);
+        return false;
+    }
+
+    if (setgroups(0, nullptr) != 0) {
+        perror("waynaptics: setgroups");
+        return false;
+    }
+    if (setgid(pw->pw_gid) != 0) {
+        perror("waynaptics: setgid");
+        return false;
+    }
+    if (setuid(pw->pw_uid) != 0) {
+        perror("waynaptics: setuid");
+        return false;
+    }
+    if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) {
+        perror("waynaptics: prctl(NO_NEW_PRIVS)");
+        return false;
+    }
+
+    fprintf(stderr, "waynaptics: dropped privileges to %s (uid=%d gid=%d)\n",
+            username, pw->pw_uid, pw->pw_gid);
+    return true;
+}
+
 static void print_usage(const char *prog) {
     fprintf(stderr,
         "Usage: %s [OPTIONS]\n"
@@ -103,6 +136,10 @@ static void print_usage(const char *prog) {
         "      --no-hires-scroll Disable hi-res scroll events (REL_WHEEL_HI_RES)\n"
         "      --no-lores-scroll Disable low-res scroll events (REL_WHEEL)\n"
         "  -s, --socket <path>   Config socket path (for runtime control)\n"
+        "      --drop-user <user>\n"
+        "                        Drop privileges to this user after setup\n"
+        "      --runtime-config <file>\n"
+        "                        Writable config for save (default: same as --config)\n"
         "      --log-evdev       Log raw evdev touchpad events to stderr\n"
         "      --log-output      Log produced mouse/scroll output events to stderr\n"
         "  -h, --help            Print this help and exit\n",
@@ -114,6 +151,8 @@ int main(int argc, char *argv[]) {
     const char *device_path = nullptr;
     const char *device_name = nullptr;
     const char *socket_path = nullptr;
+    const char *drop_user = nullptr;
+    const char *runtime_config_path = nullptr;
     bool dry = false;
     bool hires_scroll = true;
     bool lores_scroll = true;
@@ -123,18 +162,20 @@ int main(int argc, char *argv[]) {
     bool log_output = false;
 
     static struct option long_options[] = {
-        {"config",      required_argument, nullptr, 'c'},
-        {"device",      required_argument, nullptr, 'd'},
-        {"device-name", required_argument, nullptr, 'n'},
-        {"socket",      required_argument, nullptr, 's'},
-        {"dry",             no_argument,       nullptr, 1},
-        {"log-evdev",       no_argument,       nullptr, 2},
-        {"log-output",      no_argument,       nullptr, 3},
-        {"no-hires-scroll", no_argument,       nullptr, 4},
-        {"no-lores-scroll", no_argument,       nullptr, 5},
-        {"mouse-type",      required_argument, nullptr, 6},
-        {"scroll-factor",   required_argument, nullptr, 7},
-        {"help",        no_argument,       nullptr, 'h'},
+        {"config",         required_argument, nullptr, 'c'},
+        {"device",         required_argument, nullptr, 'd'},
+        {"device-name",    required_argument, nullptr, 'n'},
+        {"socket",         required_argument, nullptr, 's'},
+        {"dry",            no_argument,       nullptr, 1},
+        {"log-evdev",      no_argument,       nullptr, 2},
+        {"log-output",     no_argument,       nullptr, 3},
+        {"no-hires-scroll", no_argument,      nullptr, 4},
+        {"no-lores-scroll", no_argument,      nullptr, 5},
+        {"mouse-type",     required_argument, nullptr, 6},
+        {"scroll-factor",  required_argument, nullptr, 7},
+        {"drop-user",      required_argument, nullptr, 8},
+        {"runtime-config", required_argument, nullptr, 9},
+        {"help",           no_argument,       nullptr, 'h'},
         {nullptr, 0, nullptr, 0}
     };
 
@@ -152,6 +193,8 @@ int main(int argc, char *argv[]) {
             case 5:   lores_scroll = false; break;
             case 6:   mouse_type = optarg; break;
             case 7:   scroll_factor = atof(optarg); break;
+            case 8:   drop_user = optarg; break;
+            case 9:   runtime_config_path = optarg; break;
             case 'h': print_usage(argv[0]); return 0;
             default:  print_usage(argv[0]); return 1;
         }
@@ -241,16 +284,6 @@ int main(int argc, char *argv[]) {
     // --- Initialize pointer acceleration (after driver registered its profile) ---
     waynaptics_accel_init();
 
-    // --- Snapshot initial config (hardware defaults + pre-loaded options) ---
-    waynaptics_snapshot_initial_config();
-
-    // --- Load synclient config (after properties are initialized) ---
-    if (config_path) {
-        if (!waynaptics_load_synclient_config(config_path, &devRec)) {
-            fprintf(stderr, "waynaptics: warning: failed to load config '%s'\n", config_path);
-        }
-    }
-
     // --- DEVICE_ON ---
     if (info.device_control(&devRec, DEVICE_ON) != 0) {
         fprintf(stderr, "waynaptics: DEVICE_ON failed\n");
@@ -269,11 +302,50 @@ int main(int argc, char *argv[]) {
     sigaction(SIGINT, &sa, nullptr);
     sigaction(SIGTERM, &sa, nullptr);
 
+    // --- Config socket ---
+    // Determine the save path: --runtime-config if set, otherwise --config
+    const char *save_path = runtime_config_path ? runtime_config_path : config_path;
+    if (socket_path) {
+        waynaptics_config_socket_start(socket_path, config_path,
+                                       runtime_config_path, &devRec);
+    }
+
+    // --- Drop privileges ---
+    if (drop_user) {
+        if (!drop_privileges(drop_user)) {
+            fprintf(stderr, "waynaptics: failed to drop privileges, aborting\n");
+            info.device_control(&devRec, DEVICE_OFF);
+            info.device_control(&devRec, DEVICE_CLOSE);
+            g_output_backend->destroy();
+            delete g_output_backend;
+            free(info.name);
+            delete opts;
+            return 1;
+        }
+    }
+
     fprintf(stderr, "waynaptics: running (dry=%s)...\n", dry ? "yes" : "no");
 
-    // --- Config socket ---
-    if (socket_path) {
-        waynaptics_config_socket_start(socket_path, config_path, &devRec);
+    // --- Load config AFTER dropping privileges ---
+    // Snapshot is taken before loading, so "reload" restores to hardware defaults
+    waynaptics_snapshot_initial_config();
+
+    if (config_path) {
+        if (!waynaptics_load_synclient_config(config_path, &devRec)) {
+            fprintf(stderr, "waynaptics: warning: failed to load config '%s'\n", config_path);
+        }
+    }
+    // Load runtime config as overrides (if different from config_path and exists)
+    if (runtime_config_path && (!config_path || strcmp(runtime_config_path, config_path) != 0)) {
+        if (access(runtime_config_path, R_OK) == 0) {
+            if (!waynaptics_load_synclient_config(runtime_config_path, &devRec)) {
+                fprintf(stderr, "waynaptics: warning: failed to load runtime config '%s'\n",
+                        runtime_config_path);
+            } else {
+                fprintf(stderr, "waynaptics: loaded runtime config overrides from '%s'\n",
+                        runtime_config_path);
+            }
+        }
     }
 
     // --- GLib main loop ---

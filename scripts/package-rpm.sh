@@ -51,7 +51,11 @@ cp -a $DAEMON_ROOT/* %{buildroot}/
 %config(noreplace) /etc/waynaptics.conf
 /usr/lib/systemd/system/waynaptics.service
 
+%pre
+getent passwd waynaptics >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin waynaptics
+
 %post
+install -d -o waynaptics -g waynaptics -m 0755 /var/lib/waynaptics
 systemctl daemon-reload
 systemctl enable waynaptics.service
 systemctl start waynaptics.service || true

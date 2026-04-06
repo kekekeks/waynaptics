@@ -42,24 +42,54 @@ EOF
     echo "depend = $dep" >> "$STAGING/.PKGINFO"
   done
 
+  # Add install script reference if present
+  if [ -f "$STAGING/.INSTALL" ]; then
+    echo "install = .INSTALL" >> "$STAGING/.PKGINFO"
+  fi
+
   # Generate .MTREE
   cd "$STAGING"
   LANG=C bsdtar -czf .MTREE --format=mtree \
     --options='!all,use-set,type,uid,gid,mode,time,size,md5,sha256,link' \
-    $(find . -not -name '.PKGINFO' -not -name '.MTREE' -not -name '.')
+    $(find . -not -name '.PKGINFO' -not -name '.MTREE' -not -name '.INSTALL' -not -name '.')
 
-  # Build package
+  # Build package (include .INSTALL if present)
   local PKGFILE="$ARTIFACTS/${PKGNAME}-${VERSION}-1-${ARCH}.pkg.tar.zst"
-  bsdtar -cf - .PKGINFO .MTREE * | zstd -f -o "$PKGFILE"
+  local META=".PKGINFO .MTREE"
+  [ -f .INSTALL ] && META="$META .INSTALL"
+  bsdtar -cf - $META * | zstd -f -o "$PKGFILE"
   echo "Built $PKGFILE"
 
   rm -rf "$STAGING"
 }
 
-# Prepare extra files for daemon (config file)
+# Prepare extra files for daemon (config file + install script)
 DAEMON_EXTRA="$(mktemp -d)"
 mkdir -p "$DAEMON_EXTRA/etc"
 cp /io/dist/waynaptics.conf "$DAEMON_EXTRA/etc/waynaptics.conf"
+
+# Create install script for user/dir setup
+cat > "$DAEMON_EXTRA/.INSTALL" << 'INSTALLEOF'
+post_install() {
+    getent passwd waynaptics >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin waynaptics
+    install -d -o waynaptics -g waynaptics -m 0755 /var/lib/waynaptics
+    systemctl daemon-reload
+    systemctl enable waynaptics.service
+    systemctl start waynaptics.service || true
+}
+
+post_upgrade() {
+    getent passwd waynaptics >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin waynaptics
+    install -d -o waynaptics -g waynaptics -m 0755 /var/lib/waynaptics
+    systemctl daemon-reload
+    systemctl restart waynaptics.service || true
+}
+
+pre_remove() {
+    systemctl stop waynaptics.service || true
+    systemctl disable waynaptics.service || true
+}
+INSTALLEOF
 
 # --- waynaptics daemon package ---
 build_pkg "waynaptics" \
