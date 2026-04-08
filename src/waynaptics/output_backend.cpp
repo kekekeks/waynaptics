@@ -1,12 +1,12 @@
-#include "include/output_backend.h"
-#include "include/synshared.h"
+#include "output_backend.h"
+#include "unique_fd.h"
+#include "synshared.h"
+#include "log.h"
 
-#include <cstdio>
 #include <cstring>
 #include <cmath>
 #include <cerrno>
 #include <fcntl.h>
-#include <unistd.h>
 #include <linux/uinput.h>
 
 #ifndef REL_WHEEL_HI_RES
@@ -16,7 +16,7 @@
 #define REL_HWHEEL_HI_RES 0x0c
 #endif
 
-OutputBackend *g_output_backend = nullptr;
+std::unique_ptr<OutputBackend> g_output_backend;
 
 // ---------------------------------------------------------------------------
 // UinputBackend
@@ -28,8 +28,14 @@ public:
     bool lores_scroll = true;
     bool emulate_scrollpoint = false;
     double scroll_factor = 1.0;
+
+    ~UinputBackend() override {
+        if (fd_) {
+            ioctl(fd_.get(), UI_DEV_DESTROY);
+        }
+    }
+
     bool init() override;
-    void destroy() override;
     void post_motion(int dx, int dy) override;
     void post_button(int button, bool is_down) override;
     void post_scroll(int scroll_type, double value, double scroll_increment) override;
@@ -38,31 +44,41 @@ public:
 private:
     void emit(uint16_t type, uint16_t code, int32_t value);
 
-    int fd_ = -1;
+    UniqueFd fd_;
     double accum_vert_ = 0.0;
     double accum_horiz_ = 0.0;
 };
 
 bool UinputBackend::init() {
-    fd_ = open("/dev/uinput", O_WRONLY | O_NONBLOCK);
-    if (fd_ < 0) {
-        fprintf(stderr, "UinputBackend: failed to open /dev/uinput: %s\n", strerror(errno));
+    fd_.reset(open("/dev/uinput", O_WRONLY | O_NONBLOCK));
+    if (!fd_) {
+        wlog_errno("uinput", "failed to open /dev/uinput");
         return false;
     }
 
-    ioctl(fd_, UI_SET_EVBIT, EV_REL);
-    ioctl(fd_, UI_SET_EVBIT, EV_KEY);
-    ioctl(fd_, UI_SET_EVBIT, EV_SYN);
+    if (ioctl(fd_.get(), UI_SET_EVBIT, EV_REL) < 0 ||
+        ioctl(fd_.get(), UI_SET_EVBIT, EV_KEY) < 0 ||
+        ioctl(fd_.get(), UI_SET_EVBIT, EV_SYN) < 0) {
+        wlog_errno("uinput", "failed to set event type capabilities");
+        fd_.reset();
+        return false;
+    }
 
-    ioctl(fd_, UI_SET_RELBIT, REL_X);
-    ioctl(fd_, UI_SET_RELBIT, REL_Y);
+    if (ioctl(fd_.get(), UI_SET_RELBIT, REL_X) < 0 ||
+        ioctl(fd_.get(), UI_SET_RELBIT, REL_Y) < 0) {
+        wlog_errno("uinput", "failed to set REL_X/REL_Y capabilities");
+        fd_.reset();
+        return false;
+    }
     if (lores_scroll) {
-        ioctl(fd_, UI_SET_RELBIT, REL_WHEEL);
-        ioctl(fd_, UI_SET_RELBIT, REL_HWHEEL);
+        if (ioctl(fd_.get(), UI_SET_RELBIT, REL_WHEEL) < 0 ||
+            ioctl(fd_.get(), UI_SET_RELBIT, REL_HWHEEL) < 0)
+            wlog_errno("uinput", "warning: failed to set lo-res scroll capabilities");
     }
     if (hires_scroll) {
-        ioctl(fd_, UI_SET_RELBIT, REL_WHEEL_HI_RES);
-        ioctl(fd_, UI_SET_RELBIT, REL_HWHEEL_HI_RES);
+        if (ioctl(fd_.get(), UI_SET_RELBIT, REL_WHEEL_HI_RES) < 0 ||
+            ioctl(fd_.get(), UI_SET_RELBIT, REL_HWHEEL_HI_RES) < 0)
+            wlog_errno("uinput", "warning: failed to set hi-res scroll capabilities");
 
         struct uinput_abs_setup abs_setup{};
         abs_setup.absinfo.minimum = -32767;
@@ -70,14 +86,20 @@ bool UinputBackend::init() {
         abs_setup.absinfo.resolution = 120;
 
         abs_setup.code = REL_WHEEL_HI_RES;
-        ioctl(fd_, UI_ABS_SETUP, &abs_setup);
+        if (ioctl(fd_.get(), UI_ABS_SETUP, &abs_setup) < 0)
+            wlog_errno("uinput", "warning: UI_ABS_SETUP REL_WHEEL_HI_RES failed");
         abs_setup.code = REL_HWHEEL_HI_RES;
-        ioctl(fd_, UI_ABS_SETUP, &abs_setup);
+        if (ioctl(fd_.get(), UI_ABS_SETUP, &abs_setup) < 0)
+            wlog_errno("uinput", "warning: UI_ABS_SETUP REL_HWHEEL_HI_RES failed");
     }
 
-    ioctl(fd_, UI_SET_KEYBIT, BTN_LEFT);
-    ioctl(fd_, UI_SET_KEYBIT, BTN_RIGHT);
-    ioctl(fd_, UI_SET_KEYBIT, BTN_MIDDLE);
+    if (ioctl(fd_.get(), UI_SET_KEYBIT, BTN_LEFT) < 0 ||
+        ioctl(fd_.get(), UI_SET_KEYBIT, BTN_RIGHT) < 0 ||
+        ioctl(fd_.get(), UI_SET_KEYBIT, BTN_MIDDLE) < 0) {
+        wlog_errno("uinput", "failed to set button capabilities");
+        fd_.reset();
+        return false;
+    }
 
     struct uinput_setup setup{};
     snprintf(setup.name, UINPUT_MAX_NAME_SIZE, "waynaptics virtual pointer");
@@ -92,30 +114,20 @@ bool UinputBackend::init() {
     }
     setup.id.version = 1;
 
-    if (ioctl(fd_, UI_DEV_SETUP, &setup) < 0) {
-        fprintf(stderr, "UinputBackend: UI_DEV_SETUP failed: %s\n", strerror(errno));
-        close(fd_);
-        fd_ = -1;
+    if (ioctl(fd_.get(), UI_DEV_SETUP, &setup) < 0) {
+        wlog_errno("uinput", "UI_DEV_SETUP failed");
+        fd_.reset();
         return false;
     }
 
-    if (ioctl(fd_, UI_DEV_CREATE) < 0) {
-        fprintf(stderr, "UinputBackend: UI_DEV_CREATE failed: %s\n", strerror(errno));
-        close(fd_);
-        fd_ = -1;
+    if (ioctl(fd_.get(), UI_DEV_CREATE) < 0) {
+        wlog_errno("uinput", "UI_DEV_CREATE failed");
+        fd_.reset();
         return false;
     }
 
-    fprintf(stderr, "UinputBackend: device created\n");
+    wlog("uinput", "device created");
     return true;
-}
-
-void UinputBackend::destroy() {
-    if (fd_ >= 0) {
-        ioctl(fd_, UI_DEV_DESTROY);
-        close(fd_);
-        fd_ = -1;
-    }
 }
 
 void UinputBackend::emit(uint16_t type, uint16_t code, int32_t value) {
@@ -123,7 +135,7 @@ void UinputBackend::emit(uint16_t type, uint16_t code, int32_t value) {
     ev.type = type;
     ev.code = code;
     ev.value = value;
-    write(fd_, &ev, sizeof(ev));
+    write(fd_.get(), &ev, sizeof(ev));
 }
 
 void UinputBackend::post_motion(int dx, int dy) {
@@ -131,7 +143,6 @@ void UinputBackend::post_motion(int dx, int dy) {
         emit(EV_REL, REL_X, dx);
     if (dy != 0)
         emit(EV_REL, REL_Y, dy);
-    sync();
 }
 
 void UinputBackend::post_button(int button, bool is_down) {
@@ -141,11 +152,10 @@ void UinputBackend::post_button(int button, bool is_down) {
         case 2: code = BTN_MIDDLE; break;
         case 3: code = BTN_RIGHT;  break;
         default:
-            fprintf(stderr, "UinputBackend: unknown button %d\n", button);
+            wlog("uinput", "unknown button %d", button);
             return;
     }
     emit(EV_KEY, code, is_down ? 1 : 0);
-    sync();
 }
 
 void UinputBackend::post_scroll(int scroll_type, double value, double scroll_increment) {
@@ -177,8 +187,6 @@ void UinputBackend::post_scroll(int scroll_type, double value, double scroll_inc
             accum -= clicks * 120.0;
         }
     }
-
-    sync();
 }
 
 void UinputBackend::sync() {
@@ -192,7 +200,6 @@ void UinputBackend::sync() {
 class DryBackend : public OutputBackend {
 public:
     bool init() override;
-    void destroy() override;
     void post_motion(int dx, int dy) override;
     void post_button(int button, bool is_down) override;
     void post_scroll(int scroll_type, double value, double scroll_increment) override;
@@ -200,35 +207,37 @@ public:
 };
 
 bool DryBackend::init() {
-    fprintf(stderr, "Dry mode: no uinput device created\n");
+    wlog("dry", "no uinput device created");
     return true;
 }
 
-void DryBackend::destroy() {}
-
 void DryBackend::post_motion(int dx, int dy) {
-    fprintf(stderr, "[DRY] motion dx=%d dy=%d\n", dx, dy);
+    wlog("dry", "motion dx=%d dy=%d", dx, dy);
 }
 
 void DryBackend::post_button(int button, bool is_down) {
-    fprintf(stderr, "[DRY] button %d %s\n", button, is_down ? "down" : "up");
+    wlog("dry", "button %d %s", button, is_down ? "down" : "up");
 }
 
 void DryBackend::post_scroll(int scroll_type, double value, double scroll_increment) {
     const char *axis = (scroll_type == SCROLL_TYPE_VERTICAL) ? "vert" : "horiz";
-    fprintf(stderr, "[DRY] scroll %s value=%.1f (increment=%.0f)\n", axis, value, scroll_increment);
+    wlog("dry", "scroll %s value=%.1f (increment=%.0f)", axis, value, scroll_increment);
 }
 
 void DryBackend::sync() {}
 
 // Factory functions for main.cpp
-OutputBackend *waynaptics_create_uinput_backend(bool hires_scroll, bool lores_scroll,
-                                                bool emulate_scrollpoint, double scroll_factor) {
-    auto *b = new UinputBackend();
+std::unique_ptr<OutputBackend> waynaptics_create_uinput_backend(
+    bool hires_scroll, bool lores_scroll, bool emulate_scrollpoint, double scroll_factor)
+{
+    auto b = std::make_unique<UinputBackend>();
     b->hires_scroll = hires_scroll;
     b->lores_scroll = lores_scroll;
     b->emulate_scrollpoint = emulate_scrollpoint;
     b->scroll_factor = scroll_factor;
     return b;
 }
-OutputBackend *waynaptics_create_dry_backend() { return new DryBackend(); }
+
+std::unique_ptr<OutputBackend> waynaptics_create_dry_backend() {
+    return std::make_unique<DryBackend>();
+}

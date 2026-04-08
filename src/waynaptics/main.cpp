@@ -6,6 +6,8 @@
 #include <glib.h>
 #include <string>
 #include <map>
+#include <memory>
+#include <stdexcept>
 #include <dirent.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -16,27 +18,25 @@
 #include <pwd.h>
 #include <linux/input.h>
 
-#include "include/synshared.h"
-#include "include/output_backend.h"
-#include "include/ptrveloc.h"
-#include "include/options.h"
-#include "include/synclient_loader.h"
-#include "include/config_socket.h"
+#include "synshared.h"
+#include "output_backend.h"
+#include "unique_fd.h"
+#include "accel.h"
+#include "options.h"
+#include "synclient_loader.h"
+#include "config_socket.h"
+#include "log.h"
 
-extern "C" {
-    extern InputDriverRec SYNAPTICS;
-}
+extern "C" InputDriverRec SYNAPTICS;
 
 extern bool g_verbose_mouse_events;  // defined in event_posting.cpp
 
 bool g_verbose_evdev_events = false;
 
-// UinputBackend and DryBackend are defined in output_backend.cpp but not
-// declared in the header. Forward-declare the factory we need.
-// Since classes are defined in another TU, we create them via extern helpers.
-OutputBackend *waynaptics_create_uinput_backend(bool hires_scroll, bool lores_scroll,
-                                                bool emulate_scrollpoint, double scroll_factor);
-OutputBackend *waynaptics_create_dry_backend();
+// Factory functions return unique_ptr — declared here since class definitions are in the .cpp
+std::unique_ptr<OutputBackend> waynaptics_create_uinput_backend(
+    bool hires_scroll, bool lores_scroll, bool emulate_scrollpoint, double scroll_factor);
+std::unique_ptr<OutputBackend> waynaptics_create_dry_backend();
 
 static GMainLoop *g_main_loop_instance = nullptr;
 
@@ -51,39 +51,37 @@ static void signal_handler(int sig) {
  * /dev/input/eventN path by scanning all event devices.
  */
 static std::string resolve_device_name(const char *name) {
-    DIR *dir = opendir("/dev/input");
+    auto dir = std::unique_ptr<DIR, decltype(&closedir)>(opendir("/dev/input"), closedir);
     if (!dir) {
-        fprintf(stderr, "waynaptics: cannot open /dev/input\n");
+        wlog("main", "cannot open /dev/input");
         return "";
     }
 
     std::string result;
     struct dirent *entry;
-    while ((entry = readdir(dir)) != nullptr) {
-        if (strncmp(entry->d_name, "event", 5) != 0)
+    while ((entry = readdir(dir.get())) != nullptr) {
+        std::string d_name(entry->d_name);
+        if (!d_name.starts_with("event"))
             continue;
 
-        std::string path = std::string("/dev/input/") + entry->d_name;
-        int fd = open(path.c_str(), O_RDONLY | O_NONBLOCK);
-        if (fd < 0)
+        std::string path = "/dev/input/" + d_name;
+        UniqueFd fd(open(path.c_str(), O_RDONLY | O_NONBLOCK));
+        if (!fd)
             continue;
 
         char dev_name[256] = {0};
-        if (ioctl(fd, EVIOCGNAME(sizeof(dev_name)), dev_name) >= 0) {
-            if (strstr(dev_name, name) != nullptr) {
+        if (ioctl(fd.get(), EVIOCGNAME(sizeof(dev_name)), dev_name) >= 0) {
+            if (std::string(dev_name).find(name) != std::string::npos) {
                 result = path;
-                close(fd);
                 break;
             }
         }
-        close(fd);
     }
-    closedir(dir);
 
     if (result.empty())
-        fprintf(stderr, "waynaptics: no device matching name '%s' found\n", name);
+        wlog("main", "no device matching name '%s' found", name);
     else
-        fprintf(stderr, "waynaptics: resolved '%s' → %s\n", name, result.c_str());
+        wlog("main", "resolved '%s' → %s", name, result.c_str());
 
     return result;
 }
@@ -91,29 +89,29 @@ static std::string resolve_device_name(const char *name) {
 static bool drop_privileges(const char *username) {
     struct passwd *pw = getpwnam(username);
     if (!pw) {
-        fprintf(stderr, "waynaptics: user '%s' not found\n", username);
+        wlog("main", "user '%s' not found", username);
         return false;
     }
 
     if (setgroups(0, nullptr) != 0) {
-        perror("waynaptics: setgroups");
+        wlog_errno("main", "setgroups");
         return false;
     }
     if (setgid(pw->pw_gid) != 0) {
-        perror("waynaptics: setgid");
+        wlog_errno("main", "setgid");
         return false;
     }
     if (setuid(pw->pw_uid) != 0) {
-        perror("waynaptics: setuid");
+        wlog_errno("main", "setuid");
         return false;
     }
     if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) {
-        perror("waynaptics: prctl(NO_NEW_PRIVS)");
+        wlog_errno("main", "prctl(NO_NEW_PRIVS)");
         return false;
     }
 
-    fprintf(stderr, "waynaptics: dropped privileges to %s (uid=%d gid=%d)\n",
-            username, pw->pw_uid, pw->pw_gid);
+    wlog("main", "dropped privileges to %s (uid=%d gid=%d)",
+         username, pw->pw_uid, pw->pw_gid);
     return true;
 }
 
@@ -156,7 +154,7 @@ int main(int argc, char *argv[]) {
     bool dry = false;
     bool hires_scroll = true;
     bool lores_scroll = true;
-    const char *mouse_type = "scroll-point";
+    std::string mouse_type = "scroll-point";
     double scroll_factor = -1.0;  // -1 = use default for mouse type
     bool log_evdev = false;
     bool log_output = false;
@@ -192,7 +190,14 @@ int main(int argc, char *argv[]) {
             case 4:   hires_scroll = false; break;
             case 5:   lores_scroll = false; break;
             case 6:   mouse_type = optarg; break;
-            case 7:   scroll_factor = atof(optarg); break;
+            case 7:
+                try {
+                    scroll_factor = std::stod(optarg);
+                } catch (const std::exception &) {
+                    wlog("main", "invalid --scroll-factor value: %s", optarg);
+                    return 1;
+                }
+                break;
             case 8:   drop_user = optarg; break;
             case 9:   runtime_config_path = optarg; break;
             case 'h': print_usage(argv[0]); return 0;
@@ -200,16 +205,16 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    bool is_scrollpoint = (strcmp(mouse_type, "scroll-point") == 0);
-    if (!is_scrollpoint && strcmp(mouse_type, "generic") != 0) {
-        fprintf(stderr, "waynaptics: unknown --mouse-type '%s' (use scroll-point or generic)\n", mouse_type);
+    bool is_scrollpoint = (mouse_type == "scroll-point");
+    if (!is_scrollpoint && mouse_type != "generic") {
+        wlog("main", "unknown --mouse-type '%s' (use scroll-point or generic)", mouse_type.c_str());
         return 1;
     }
     if (scroll_factor < 0)
         scroll_factor = is_scrollpoint ? 5.0 : 1.0;
 
     if (device_path && device_name) {
-        fprintf(stderr, "waynaptics: --device and --device-name are mutually exclusive\n");
+        wlog("main", "--device and --device-name are mutually exclusive");
         return 1;
     }
 
@@ -226,24 +231,19 @@ int main(int argc, char *argv[]) {
     g_verbose_evdev_events = log_evdev;
 
     // --- Create Options ---
-    auto *opts = new Options();
+    auto opts = std::make_unique<Options>();
     if (device_path)
         opts->options["Device"] = device_path;
     if (dry)
         opts->options["GrabEventDevice"] = "0";
 
-    // Pre-load synclient config into options BEFORE PreInit
-    // so set_default_parameters() reads correct MinSpeed/MaxSpeed/AccelFactor
-    if (config_path) {
-        waynaptics_preload_synclient_options(config_path, (XF86OptionPtr)opts);
-    }
-
     // --- Create device structures ---
     DeviceIntRec devRec = {};
     InputInfoRec info = {};
-    info.name = strdup("waynaptics");
+    std::string dev_name_str = "waynaptics";
+    info.name = dev_name_str.data();
     info.dev = &devRec;
-    info.options = (XF86OptionPtr)opts;
+    info.options = static_cast<XF86OptionPtr>(opts.get());
     devRec.pub.devicePrivate = &info;
 
     // --- Set up output backend ---
@@ -254,30 +254,20 @@ int main(int argc, char *argv[]) {
                                                             is_scrollpoint, scroll_factor);
 
     if (!g_output_backend->init()) {
-        fprintf(stderr, "waynaptics: failed to initialize output backend\n");
-        free(info.name);
-        delete opts;
+        wlog("main", "failed to initialize output backend");
         return 1;
     }
 
     // --- SynapticsPreInit ---
     int rc = SYNAPTICS.PreInit(&SYNAPTICS, &info, 0);
     if (rc != 0) {
-        fprintf(stderr, "waynaptics: SynapticsPreInit failed (%d)\n", rc);
-        g_output_backend->destroy();
-        delete g_output_backend;
-        free(info.name);
-        delete opts;
+        wlog("main", "SynapticsPreInit failed (%d)", rc);
         return 1;
     }
 
     // --- DEVICE_INIT ---
     if (info.device_control(&devRec, DEVICE_INIT) != 0) {
-        fprintf(stderr, "waynaptics: DEVICE_INIT failed\n");
-        g_output_backend->destroy();
-        delete g_output_backend;
-        free(info.name);
-        delete opts;
+        wlog("main", "DEVICE_INIT failed");
         return 1;
     }
 
@@ -286,12 +276,8 @@ int main(int argc, char *argv[]) {
 
     // --- DEVICE_ON ---
     if (info.device_control(&devRec, DEVICE_ON) != 0) {
-        fprintf(stderr, "waynaptics: DEVICE_ON failed\n");
+        wlog("main", "DEVICE_ON failed");
         info.device_control(&devRec, DEVICE_CLOSE);
-        g_output_backend->destroy();
-        delete g_output_backend;
-        free(info.name);
-        delete opts;
         return 1;
     }
 
@@ -303,50 +289,31 @@ int main(int argc, char *argv[]) {
     sigaction(SIGTERM, &sa, nullptr);
 
     // --- Config socket ---
-    // Determine the save path: --runtime-config if set, otherwise --config
-    const char *save_path = runtime_config_path ? runtime_config_path : config_path;
     if (socket_path) {
-        waynaptics_config_socket_start(socket_path, config_path,
-                                       runtime_config_path, &devRec);
+        waynaptics_config_socket_start(socket_path,
+                                       config_path ? config_path : "",
+                                       runtime_config_path ? runtime_config_path : "",
+                                       &devRec);
     }
 
     // --- Drop privileges ---
     if (drop_user) {
         if (!drop_privileges(drop_user)) {
-            fprintf(stderr, "waynaptics: failed to drop privileges, aborting\n");
+            wlog("main", "failed to drop privileges, aborting");
             info.device_control(&devRec, DEVICE_OFF);
             info.device_control(&devRec, DEVICE_CLOSE);
-            g_output_backend->destroy();
-            delete g_output_backend;
-            free(info.name);
-            delete opts;
             return 1;
         }
     }
 
-    fprintf(stderr, "waynaptics: running (dry=%s)...\n", dry ? "yes" : "no");
+    wlog("main", "running (dry=%s)...", dry ? "yes" : "no");
 
     // --- Load config AFTER dropping privileges ---
     // Snapshot is taken before loading, so "reload" restores to hardware defaults
     waynaptics_snapshot_initial_config();
-
-    if (config_path) {
-        if (!waynaptics_load_synclient_config(config_path, &devRec)) {
-            fprintf(stderr, "waynaptics: warning: failed to load config '%s'\n", config_path);
-        }
-    }
-    // Load runtime config as overrides (if different from config_path and exists)
-    if (runtime_config_path && (!config_path || strcmp(runtime_config_path, config_path) != 0)) {
-        if (access(runtime_config_path, R_OK) == 0) {
-            if (!waynaptics_load_synclient_config(runtime_config_path, &devRec)) {
-                fprintf(stderr, "waynaptics: warning: failed to load runtime config '%s'\n",
-                        runtime_config_path);
-            } else {
-                fprintf(stderr, "waynaptics: loaded runtime config overrides from '%s'\n",
-                        runtime_config_path);
-            }
-        }
-    }
+    waynaptics_reload_config(config_path ? config_path : "",
+                             runtime_config_path ? runtime_config_path : "",
+                             &devRec);
 
     // --- GLib main loop ---
     g_main_context_acquire(g_main_context_default());
@@ -356,14 +323,10 @@ int main(int argc, char *argv[]) {
     g_main_loop_instance = nullptr;
 
     // --- Cleanup ---
-    fprintf(stderr, "waynaptics: shutting down...\n");
+    wlog("main", "shutting down...");
     info.device_control(&devRec, DEVICE_OFF);
     info.device_control(&devRec, DEVICE_CLOSE);
-    g_output_backend->destroy();
-    delete g_output_backend;
-    g_output_backend = nullptr;
-    free(info.name);
-    delete opts;
+    g_output_backend.reset();
 
     return 0;
 }

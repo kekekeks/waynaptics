@@ -25,10 +25,8 @@ add_executable(waynaptics main.cpp
         supportlib.cpp
         include/synshared.h
         mainloop.cpp
-        include/mainloop.h
         valuators.c
-        dimensions.c
-        touch_state.c
+        synaptics_private_state.c
         fakeclude/xf86Module.h
         atoms.cpp
         options.cpp
@@ -42,10 +40,19 @@ add_executable(waynaptics main.cpp
         ptrveloc.cpp
         include/device_init.h
         include/output_backend.h
+        include/accel.h
         include/xi_properties.h
         include/synclient_loader.h
         include/config_socket.h)
-target_include_directories(waynaptics PRIVATE include fakeclude ../../external/xf86-input-synaptics/include ../../external/xf86-input-synaptics/src ${LIBEVDEV_INCLUDE_DIRS} ${GLIB_INCLUDE_DIRS})
+
+# fakeclude provides X server shim headers for the C driver code only
+target_include_directories(waynaptics PRIVATE
+        include
+        $<$<COMPILE_LANGUAGE:C>:${CMAKE_CURRENT_SOURCE_DIR}/fakeclude>
+        ../../external/xf86-input-synaptics/include
+        ../../external/xf86-input-synaptics/src
+        ${LIBEVDEV_INCLUDE_DIRS}
+        ${GLIB_INCLUDE_DIRS})
 target_link_libraries(waynaptics PRIVATE ${LIBEVDEV_LIBRARIES} ${GLIB_LDFLAGS})
 
 install(TARGETS waynaptics RUNTIME DESTINATION bin COMPONENT daemon)

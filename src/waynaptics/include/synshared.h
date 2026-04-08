@@ -10,6 +10,11 @@
 #include <string.h>
 #include <stdlib.h>
 
+#ifndef TRUE
+#define TRUE 1
+#define FALSE 0
+#endif
+
 #include "X11/X.h"
 #include "X11/Xproto.h"
 #include "X11/Xlib.h"
@@ -265,14 +270,14 @@ typedef CARD32 (*OsTimerCallback) (OsTimerPtr timer,
 
 extern CARD32 GetTimeInMillis(void);
 extern CARD64 GetTimeInMicros(void);
-extern _X_EXPORT OsTimerPtr TimerSet(OsTimerPtr timer,
+extern OsTimerPtr TimerSet(OsTimerPtr timer,
                                      int flags,
                                      CARD32 millis,
                                      OsTimerCallback func,
                                      void *arg);
 
-extern _X_EXPORT void TimerCancel(OsTimerPtr /* pTimer */ );
-extern _X_EXPORT void TimerFree(OsTimerPtr /* pTimer */ );
+extern void TimerCancel(OsTimerPtr /* pTimer */ );
+extern void TimerFree(OsTimerPtr /* pTimer */ );
 
 int xf86FlushInput(int fd);
 
@@ -392,6 +397,23 @@ extern _X_EXPORT Bool valuator_mask_fetch_unaccelerated(const ValuatorMask *mask
                                                         double *accel,
                                                         double *unaccel);
 extern _X_HIDDEN void valuator_mask_drop_unaccelerated(ValuatorMask *mask);
+
+// Touch state — used by synaptics_private_state.c to extract contact data
+// from the driver's internal structures
+#define WAYNAPTICS_MAX_TOUCHES 10
+
+struct WaynapticsTouchContact {
+    int x, y, z;
+    int active;
+};
+
+struct WaynapticsTouchState {
+    int num_contacts;
+    struct WaynapticsTouchContact contacts[WAYNAPTICS_MAX_TOUCHES];
+};
+
+Bool waynaptics_get_touch_state(DeviceIntPtr dev, struct WaynapticsTouchState *state);
+Bool waynaptics_get_dimensions(DeviceIntPtr dev, int *minx, int *maxx, int *miny, int *maxy);
 
 #ifdef __cplusplus
 }

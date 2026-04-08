@@ -1,6 +1,6 @@
 #include "synshared.h"
-#include "include/options.h"
-#include "include/touch_state.h"
+#include "options.h"
+#include "config_socket.h"
 #include <glib.h>
 #include <map>
 #include <string>
@@ -17,23 +17,21 @@ static gboolean io_watch_callback(GIOChannel *source, GIOCondition condition, gp
     return G_SOURCE_CONTINUE;
 }
 
-extern "C" {
-
-int xf86OpenSerial(XF86OptionPtr options)
+extern "C" int xf86OpenSerial(XF86OptionPtr options)
 {
-    const char *device = xf86CheckStrOption(options, "Device", NULL);
+    const char *device = xf86CheckStrOption(options, "Device", nullptr);
     if (!device) {
         return -1;
     }
     return open(device, O_RDWR | O_NONBLOCK);
 }
 
-int xf86CloseSerial(int fd)
+extern "C" int xf86CloseSerial(int fd)
 {
     return close(fd);
 }
 
-void xf86AddEnabledDevice(InputInfoPtr pInfo)
+extern "C" void xf86AddEnabledDevice(InputInfoPtr pInfo)
 {
     GIOChannel *channel = g_io_channel_unix_new(pInfo->fd);
     guint source_id = g_io_add_watch(channel, G_IO_IN, io_watch_callback, pInfo);
@@ -41,7 +39,7 @@ void xf86AddEnabledDevice(InputInfoPtr pInfo)
     fd_source_map[pInfo->fd] = source_id;
 }
 
-void xf86RemoveEnabledDevice(InputInfoPtr pInfo)
+extern "C" void xf86RemoveEnabledDevice(InputInfoPtr pInfo)
 {
     auto it = fd_source_map.find(pInfo->fd);
     if (it != fd_source_map.end()) {
@@ -50,14 +48,12 @@ void xf86RemoveEnabledDevice(InputInfoPtr pInfo)
     }
 }
 
-void xf86DeleteInput(InputInfoPtr pInfo, int flags)
+extern "C" void xf86DeleteInput(InputInfoPtr pInfo, int flags)
 {
     // No-op: we only have one device
 }
 
-void xf86AddInputDriver(InputDriverPtr driver, void *module, int flags)
+extern "C" void xf86AddInputDriver(InputDriverPtr driver, void *module, int flags)
 {
     // No-op: module setup not used
 }
-
-} // extern "C"

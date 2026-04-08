@@ -2,31 +2,29 @@
 
 #include "synshared.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+#include <string>
+#include <optional>
+#include <functional>
 
-bool waynaptics_preload_synclient_options(const char *path, XF86OptionPtr opts_ptr);
-bool waynaptics_load_synclient_config(const char *path, DeviceIntPtr dev);
+bool waynaptics_load_synclient_config(const std::string &path, DeviceIntPtr dev);
+
+// Load base config + runtime config overlay (if different and exists).
+// Restores to snapshot first, then applies both layers.
+void waynaptics_reload_config(const std::string &config_path,
+                              const std::string &runtime_config_path,
+                              DeviceIntPtr dev);
 
 // Apply a single "Name=value" option to the running driver.
-// Returns NULL on success, or an error message string on failure.
-const char *waynaptics_apply_option(const char *name, const char *value, DeviceIntPtr dev);
+// Returns std::nullopt on success, or an error message on failure.
+std::optional<std::string> waynaptics_apply_option(const std::string &name,
+                                                   const std::string &value,
+                                                   DeviceIntPtr dev);
 
-// Dump current config in synclient format into the provided callback.
-// The callback is called once per line (without trailing newline).
-void waynaptics_dump_config(void (*emit_line)(const char *line, void *ctx), void *ctx);
-
-// Get touchpad axis dimensions.
-// Returns false if dimensions are not available.
-bool waynaptics_get_dimensions(DeviceIntPtr dev, int *minx, int *maxx, int *miny, int *maxy);
+// Dump current config in synclient format via callback.
+void waynaptics_dump_config(std::function<void(const std::string &)> emit_line);
 
 // Snapshot all current parameter values (call after DEVICE_INIT, before config load).
-void waynaptics_snapshot_initial_config(void);
+void waynaptics_snapshot_initial_config();
 
 // Restore all parameters to the initial snapshot values.
 void waynaptics_restore_initial_config(DeviceIntPtr dev);
-
-#ifdef __cplusplus
-}
-#endif

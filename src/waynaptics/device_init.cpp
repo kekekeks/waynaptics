@@ -1,59 +1,48 @@
-#include "shim.h"
-#include "include/device_init.h"
-#include "include/ptrveloc.h"
+#include "synshared.h"
+#include "device_init.h"
+#include "accel.h"
+#include "log.h"
 #include <cstring>
-#include <cstdio>
 
 static DeviceInitState g_device_init_state;
 
-extern "C" {
-
-typedef void (*PtrCtrlProcPtr)(DeviceIntPtr device, PtrCtrl *ctrl);
-typedef double (*PointerAccelerationProfileFunc)(
-    DeviceIntPtr dev, DeviceVelocityPtr vel,
-    double velocity, double threshold, double accelCoeff);
-
-/* Defined in ptrveloc.cpp */
-extern void waynaptics_accel_set_profile(
-    double (*profile)(DeviceIntPtr, DeviceVelocityPtr, double, double, double));
-
-DeviceInitState *waynaptics_get_device_init_state(void)
+DeviceInitState *waynaptics_get_device_init_state()
 {
     return &g_device_init_state;
 }
 
-Bool
+extern "C" Bool
 InitPointerDeviceStruct(DevicePtr device, CARD8 *map, int numButtons,
                         Atom *btn_labels, PtrCtrlProcPtr controlProc,
                         int numMotionEvents, int numAxes, Atom *axes_labels)
 {
-    printf("InitPointerDeviceStruct: %d buttons, %d axes\n", numButtons, numAxes);
+    wlog("init", "InitPointerDeviceStruct: %d buttons, %d axes", numButtons, numAxes);
     return TRUE;
 }
 
-int
+extern "C" int
 GetMotionHistorySize(void)
 {
     return 256;
 }
 
-Bool
+extern "C" Bool
 xf86InitValuatorAxisStruct(DeviceIntPtr dev, int axnum, Atom label,
                            int minval, int maxval, int resolution,
                            int min_res, int max_res, int mode)
 {
-    printf("xf86InitValuatorAxisStruct: axis %d, range [%d, %d], res %d, mode %d\n",
-           axnum, minval, maxval, resolution, mode);
+    wlog("init", "xf86InitValuatorAxisStruct: axis %d, range [%d, %d], res %d, mode %d",
+         axnum, minval, maxval, resolution, mode);
     return TRUE;
 }
 
-void
+extern "C" void
 xf86InitValuatorDefaults(DeviceIntPtr dev, int axnum)
 {
     /* no-op */
 }
 
-Bool
+extern "C" Bool
 SetScrollValuator(DeviceIntPtr dev, int axnum, enum ScrollType type,
                   double increment, int flags)
 {
@@ -73,12 +62,12 @@ SetScrollValuator(DeviceIntPtr dev, int axnum, enum ScrollType type,
     info->increment = increment;
     info->flags = flags;
 
-    printf("SetScrollValuator: axis %d, type %d, increment %.2f\n",
-           axnum, (int)type, increment);
+    wlog("init", "SetScrollValuator: axis %d, type %d, increment %.2f",
+         axnum, static_cast<int>(type), increment);
     return TRUE;
 }
 
-DeviceVelocityPtr
+extern "C" DeviceVelocityPtr
 GetDevicePredictableAccelData(DeviceIntPtr dev)
 {
     DeviceVelocityRec *vel = &g_device_init_state.velocity;
@@ -90,11 +79,9 @@ GetDevicePredictableAccelData(DeviceIntPtr dev)
     return vel;
 }
 
-void
+extern "C" void
 SetDeviceSpecificAccelerationProfile(DeviceVelocityPtr vel,
                                      PointerAccelerationProfileFunc profile)
 {
     waynaptics_accel_set_profile(profile);
 }
-
-} /* extern "C" */

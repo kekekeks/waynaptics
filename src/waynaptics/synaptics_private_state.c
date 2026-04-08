@@ -1,8 +1,16 @@
+/*
+ * synaptics_private_state.c — Access to synaptics driver internals
+ *
+ * This file is responsible for reaching into the synaptics driver's private
+ * data structures (SynapticsPrivate, eventcomm_proto_data) to extract touch
+ * contact positions. It is treated as an out-of-tree addition to the synaptics
+ * driver codebase and therefore uses C with the driver's headers and conventions.
+ */
+
 #include "fakeclude/shim.h"
-#include "include/touch_state.h"
 #include <synapticsstr.h>
-#include <stdbool.h>
 #include <string.h>
+#include <stdbool.h>
 #include <linux/input.h>
 
 #ifndef ABS_MT_TOOL_Y
@@ -13,9 +21,9 @@
 #define ABS_MT_MAX ABS_MT_TOOL_Y
 #define ABS_MT_CNT (ABS_MT_MAX - ABS_MT_MIN + 1)
 
-// Mirror of eventcomm_proto_data (defined in eventcomm.c, not in a header)
+/* Mirror of eventcomm_proto_data (defined in eventcomm.c, not in a header) */
 struct waynaptics_proto_data {
-    int need_grab; // BOOL
+    int need_grab;
     int st_to_mt_offset[2];
     double st_to_mt_scale[2];
     int axis_map[ABS_MT_CNT];
@@ -24,30 +32,30 @@ struct waynaptics_proto_data {
     int num_touches;
 };
 
-bool waynaptics_get_touch_state(DeviceIntPtr dev, struct WaynapticsTouchState *state) {
+Bool waynaptics_get_touch_state(DeviceIntPtr dev, struct WaynapticsTouchState *state) {
     memset(state, 0, sizeof(*state));
 
     if (!dev || !dev->public.devicePrivate)
-        return false;
+        return FALSE;
 
     InputInfoPtr pInfo = (InputInfoPtr)dev->public.devicePrivate;
     if (!pInfo->private)
-        return false;
+        return FALSE;
 
     SynapticsPrivate *priv = (SynapticsPrivate *)pInfo->private;
 
     int numFingers = (priv->hwState) ? priv->hwState->numFingers : 0;
     if (numFingers <= 0)
-        return false;
+        return FALSE;
 
-    // Always report the single-touch position as contact 0
+    /* Always report the single-touch position as contact 0 */
     state->contacts[0].x = priv->hwState->x;
     state->contacts[0].y = priv->hwState->y;
     state->contacts[0].z = priv->hwState->z;
     state->contacts[0].active = 1;
     state->num_contacts = 1;
 
-    // If multitouch is available, read individual slots (capped to numFingers)
+    /* If multitouch is available, read individual slots (capped to numFingers) */
     if (numFingers > 1 && priv->has_touch && priv->proto_data && priv->num_slots > 0) {
         struct waynaptics_proto_data *proto_data =
             (struct waynaptics_proto_data *)priv->proto_data;
@@ -61,12 +69,13 @@ bool waynaptics_get_touch_state(DeviceIntPtr dev, struct WaynapticsTouchState *s
             if (max_slots > WAYNAPTICS_MAX_TOUCHES)
                 max_slots = WAYNAPTICS_MAX_TOUCHES;
 
-            for (int i = 0; i < max_slots && count < numFingers; i++) {
+            int i;
+            for (i = 0; i < max_slots && count < numFingers; i++) {
+                int x = 0, y = 0;
+                Bool has_x = FALSE, has_y = FALSE;
+
                 if (!proto_data->last_mt_vals[i])
                     continue;
-
-                int x = 0, y = 0;
-                bool has_x = false, has_y = false;
 
                 if (x_axis >= 0)
                     has_x = valuator_mask_fetch(proto_data->last_mt_vals[i], x_axis, &x);
@@ -87,5 +96,23 @@ bool waynaptics_get_touch_state(DeviceIntPtr dev, struct WaynapticsTouchState *s
         }
     }
 
-    return true;
+    return TRUE;
+}
+
+Bool waynaptics_get_dimensions(DeviceIntPtr dev, int *minx, int *maxx, int *miny, int *maxy) {
+    if (!dev || !dev->public.devicePrivate)
+        return FALSE;
+
+    InputInfoPtr pInfo = (InputInfoPtr)dev->public.devicePrivate;
+    if (!pInfo->private)
+        return FALSE;
+
+    SynapticsPrivate *priv = (SynapticsPrivate *)pInfo->private;
+
+    *minx = priv->minx;
+    *maxx = priv->maxx;
+    *miny = priv->miny;
+    *maxy = priv->maxy;
+
+    return (*maxx > *minx && *maxy > *miny);
 }

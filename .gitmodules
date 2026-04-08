@@ -1,3 +1,3 @@
 [submodule "external/xf86-input-synaptics"]
 	path = external/xf86-input-synaptics
-	url = https://gitlab.freedesktop.org/xorg/driver/xf86-input-synaptics.git
+	url = ../xf86-input-synaptics

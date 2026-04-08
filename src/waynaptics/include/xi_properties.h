@@ -2,37 +2,62 @@
 #define WAYNAPTICS_XI_PROPERTIES_H
 
 #include "synshared.h"
+#include <vector>
+#include <optional>
+#include <cstring>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+// Owned copy of a property's value, safe to hold on the stack.
+// Uses memcpy-based accessors to avoid strict-aliasing violations.
+struct PropertyValue {
+    Atom type = 0;
+    short format = 0;
+    long size = 0;  // element count
+    std::vector<uint8_t> data;
 
-int XIChangeDeviceProperty(DeviceIntPtr dev, Atom property, Atom type,
-                           int format, int mode, unsigned long len,
-                           const void *value, Bool sendevent);
+    explicit operator bool() const { return !data.empty(); }
 
-void XISetDevicePropertyDeletable(DeviceIntPtr dev, Atom property,
-                                  Bool deletable);
+    template<typename T>
+    T read(int offset) const {
+        size_t byte_offset = offset * sizeof(T);
+        if (byte_offset + sizeof(T) > data.size())
+            return T{};
+        T result{};
+        std::memcpy(&result, data.data() + byte_offset, sizeof(T));
+        return result;
+    }
 
-void XIDeleteDeviceProperty(DeviceIntPtr dev, Atom property, Bool sendevent);
+    template<typename T>
+    bool write(int offset, T value) {
+        size_t byte_offset = offset * sizeof(T);
+        if (byte_offset + sizeof(T) > data.size())
+            return false;
+        std::memcpy(data.data() + byte_offset, &value, sizeof(T));
+        return true;
+    }
+};
 
-int XIRegisterPropertyHandler(DeviceIntPtr dev,
-                              int (*SetProperty)(DeviceIntPtr, Atom,
-                                                 XIPropertyValuePtr, BOOL),
-                              int (*GetProperty)(DeviceIntPtr, Atom),
-                              int (*DeleteProperty)(DeviceIntPtr, Atom));
+// Boundary functions — called by synaptics driver C code
+extern "C" int XIChangeDeviceProperty(DeviceIntPtr dev, Atom property, Atom type,
+                                      int format, int mode, unsigned long len,
+                                      const void *value, Bool sendevent);
 
-/* Get the XIPropertyValue for a given property atom, or NULL if not found. */
-XIPropertyValuePtr waynaptics_get_property_value(Atom property);
+extern "C" void XISetDevicePropertyDeletable(DeviceIntPtr dev, Atom property,
+                                             Bool deletable);
 
-/* Invoke the registered SetProperty handler for the given property.
-   Returns Success (0) on success, or an X error code. */
-int waynaptics_call_set_property_handler(DeviceIntPtr dev, Atom property,
-                                         XIPropertyValuePtr val,
-                                         BOOL checkonly);
+extern "C" void XIDeleteDeviceProperty(DeviceIntPtr dev, Atom property, Bool sendevent);
 
-#ifdef __cplusplus
-}
-#endif
+extern "C" int XIRegisterPropertyHandler(DeviceIntPtr dev,
+                                         int (*SetProperty)(DeviceIntPtr, Atom,
+                                                            XIPropertyValuePtr, BOOL),
+                                         int (*GetProperty)(DeviceIntPtr, Atom),
+                                         int (*DeleteProperty)(DeviceIntPtr, Atom));
+
+// Waynaptics-internal — C++ linkage
+std::optional<PropertyValue> waynaptics_get_property_value(Atom property);
+
+// Write property data back to the store and notify the driver.
+// Only accepts the data bytes — format/type/size are immutable.
+int waynaptics_update_property(DeviceIntPtr dev, Atom property,
+                               const std::vector<uint8_t> &data);
 
 #endif

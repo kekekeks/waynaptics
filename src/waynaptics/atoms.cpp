@@ -94,17 +94,10 @@ extern "C" Atom XIGetKnownProperty(const char* name)
 {
     std::lock_guard<std::recursive_mutex> lock(atomRegistryMutex);
     Init();
-    if(atomMap.find(name) != atomMap.end())
-    {
-        return atomMap[name];
-    }
-    else
-    {
-        Atom newAtom = static_cast<Atom>(allAtoms.size());
+    auto [it, inserted] = atomMap.try_emplace(name, static_cast<Atom>(allAtoms.size()));
+    if (inserted)
         allAtoms.emplace_back(name);
-        atomMap[name] = newAtom;
-        return newAtom;
-    }
+    return it->second;
 }
 
 extern "C" const char* NameForAtom(Atom atom)

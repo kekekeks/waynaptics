@@ -1,15 +1,6 @@
 #include "synshared.h"
-#include "mainloop.h"
 #include "glib.h"
-
-
-void run_main_loop()
-{
-    g_main_context_acquire(g_main_context_default());
-    auto loop = g_main_loop_new(nullptr, FALSE);
-    g_main_loop_run(loop);
-    g_main_loop_unref(loop);
-}
+#include <memory>
 
 
 class Timer
@@ -21,7 +12,7 @@ public:
 private:
     static gboolean g_timer_func(void* userData)
     {
-        auto timer = (Timer *) userData;
+        auto timer = static_cast<Timer *>(userData);
         timer->_timerId = 0;
         timer->callback(timer, GetTimeInMillis(), timer->arg);
         return G_SOURCE_REMOVE;
@@ -47,22 +38,25 @@ public:
 
 };
 
-extern "C"
-{
-CARD32 GetTimeInMillis(void) {
+extern "C" CARD32 GetTimeInMillis(void) {
     return g_get_monotonic_time() / 1000;
 }
-CARD64 GetTimeInMicros(void) {
+
+extern "C" CARD64 GetTimeInMicros(void) {
     return g_get_monotonic_time();
 }
 
-
-extern _X_EXPORT OsTimerPtr TimerSet(OsTimerPtr timerPtr,
-                                     int flags,
-                                     CARD32 millis,
-                                     OsTimerCallback func,
-                                     void *arg) {
-    auto timer = timerPtr ? (Timer *) timerPtr : new Timer();
+extern "C" OsTimerPtr TimerSet(OsTimerPtr timerPtr,
+                    int flags,
+                    CARD32 millis,
+                    OsTimerCallback func,
+                    void *arg) {
+    Timer *timer;
+    if (timerPtr) {
+        timer = static_cast<Timer *>(timerPtr);
+    } else {
+        timer = new Timer();
+    }
     timer->callback = func;
     timer->arg = arg;
     if (func && millis > 0)
@@ -70,12 +64,10 @@ extern _X_EXPORT OsTimerPtr TimerSet(OsTimerPtr timerPtr,
     return timer;
 }
 
-extern _X_EXPORT void TimerCancel(OsTimerPtr ptr) {
-    ((Timer *) ptr)->cancel();
+extern "C" void TimerCancel(OsTimerPtr ptr) {
+    static_cast<Timer *>(ptr)->cancel();
 }
 
-extern _X_EXPORT void TimerFree(OsTimerPtr timer) {
-    delete (Timer *) timer;
-}
-
+extern "C" void TimerFree(OsTimerPtr timer) {
+    delete static_cast<Timer *>(timer);
 }

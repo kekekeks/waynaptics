@@ -1,10 +1,10 @@
-#include "include/synshared.h"
-#include "include/output_backend.h"
-#include "include/device_init.h"
-#include "include/ptrveloc.h"
+#include "synshared.h"
+#include "output_backend.h"
+#include "device_init.h"
+#include "accel.h"
+#include "log.h"
 
 #include <cstdarg>
-#include <cstdio>
 #include <cmath>
 
 bool g_verbose_mouse_events = false;
@@ -30,20 +30,20 @@ xf86PostMotionEvent(DeviceIntPtr dev, int is_absolute,
     double dy = raw_dy;
 
     /* Apply pointer acceleration (velocity tracking + profile) */
-    waynaptics_accel_apply(dev, &dx, &dy);
+    waynaptics_accel_apply(dev, dx, dy);
 
     g_frac_dx += dx;
     g_frac_dy += dy;
 
-    int out_dx = (int)trunc(g_frac_dx);
-    int out_dy = (int)trunc(g_frac_dy);
+    int out_dx = static_cast<int>(trunc(g_frac_dx));
+    int out_dy = static_cast<int>(trunc(g_frac_dy));
 
     g_frac_dx -= out_dx;
     g_frac_dy -= out_dy;
 
     if (g_verbose_mouse_events)
-        fprintf(stderr, "[MOUSE] motion raw=%d,%d accel=%d,%d\n",
-                raw_dx, raw_dy, out_dx, out_dy);
+        wlog("mouse", "motion raw=%d,%d accel=%d,%d",
+             raw_dx, raw_dy, out_dx, out_dy);
 
     if (out_dx != 0 || out_dy != 0) {
         g_output_backend->post_motion(out_dx, out_dy);
@@ -60,7 +60,7 @@ xf86PostButtonEvent(DeviceIntPtr dev, int is_absolute,
         return;
 
     if (g_verbose_mouse_events)
-        fprintf(stderr, "[MOUSE] button %d %s\n", button, is_down ? "down" : "up");
+        wlog("mouse", "button %d %s", button, is_down ? "down" : "up");
 
     g_output_backend->post_button(button, is_down != 0);
     g_output_backend->sync();
@@ -87,8 +87,8 @@ xf86PostMotionEventM(DeviceIntPtr dev, int is_absolute,
         if (g_verbose_mouse_events) {
             const char *axis_name =
                 (info->type == SCROLL_TYPE_VERTICAL) ? "vert" : "horiz";
-            fprintf(stderr, "[MOUSE] scroll %s value=%.2f increment=%.1f\n",
-                    axis_name, value, info->increment);
+            wlog("mouse", "scroll %s value=%.2f increment=%.1f",
+                 axis_name, value, info->increment);
         }
 
         g_output_backend->post_scroll(info->type, value, info->increment);

@@ -1,16 +1,18 @@
-#include "shim.h"
-#include "include/synshared.h"
-#include "include/xi_properties.h"
-#include "include/synclient_loader.h"
-#include "include/options.h"
+#include "synshared.h"
+#include "xi_properties.h"
+#include "synclient_loader.h"
+#include "log.h"
 #include <synaptics-properties.h>
 #include <cstdio>
 #include <cstring>
-#include <cstdlib>
 #include <fstream>
 #include <string>
 #include <vector>
+#include <unistd.h>
 #include <map>
+#include <optional>
+#include <functional>
+#include <stdexcept>
 
 enum ParamType { PT_INT = 0, PT_BOOL = 1, PT_DOUBLE = 2 };
 
@@ -98,9 +100,9 @@ static const ParamMapping params[] = {
     {nullptr,                 PT_INT,    nullptr,                                     0, 0},
 };
 
-static const ParamMapping *find_param(const char *name) {
+static const ParamMapping *find_param(const std::string &name) {
     for (const ParamMapping *p = params; p->name != nullptr; p++) {
-        if (strcmp(p->name, name) == 0)
+        if (name == p->name)
             return p;
     }
     return nullptr;
@@ -113,42 +115,41 @@ static std::string trim(const std::string &s) {
     return s.substr(start, end - start + 1);
 }
 
-/*
- * Pre-load synclient config into the Options map BEFORE SynapticsPreInit.
- * This ensures set_default_parameters() reads the correct values
- * (especially MinSpeed/MaxSpeed/AccelFactor which affect acceleration setup).
- */
-extern "C" bool waynaptics_preload_synclient_options(const char *path, XF86OptionPtr opts_ptr) {
-    auto *opts = static_cast<Options *>(opts_ptr);
-    std::ifstream file(path);
-    if (!file.is_open())
-        return false;
-
-    std::string line;
-    while (std::getline(file, line)) {
-        std::string trimmed = trim(line);
-        if (trimmed.empty() || trimmed == "Parameter settings:")
-            continue;
-        size_t eq_pos = trimmed.find('=');
-        if (eq_pos == std::string::npos)
-            continue;
-        std::string name = trim(trimmed.substr(0, eq_pos));
-        std::string value_str = trim(trimmed.substr(eq_pos + 1));
-        if (name.empty() || value_str.empty())
-            continue;
-        if (name == "GrabEventDevice" || name == "TouchpadOff")
-            continue;
-        /* Only inject if it's a known synclient parameter */
-        if (find_param(name.c_str()) != nullptr)
-            opts->options[name] = value_str;
+// Parse a string value and write it into the correct offset of a PropertyValue
+// based on the mapping's format. Returns error string on failure, nullopt on success.
+static std::optional<std::string> parse_and_write(const ParamMapping *mapping,
+                                                  const std::string &value_str,
+                                                  PropertyValue &val) {
+    if (mapping->format == 0) {
+        double dval;
+        try {
+            dval = std::stod(value_str);
+        } catch (const std::exception &) {
+            return std::string("invalid float value '") + value_str + "'";
+        }
+        val.write<float>(mapping->offset, static_cast<float>(dval));
+    } else {
+        long ival;
+        try {
+            ival = std::stol(value_str);
+        } catch (const std::exception &) {
+            return std::string("invalid integer value '") + value_str + "'";
+        }
+        switch (mapping->format) {
+            case 8:  val.write<uint8_t>(mapping->offset, static_cast<uint8_t>(ival)); break;
+            case 16: val.write<uint16_t>(mapping->offset, static_cast<uint16_t>(ival)); break;
+            case 32: val.write<int32_t>(mapping->offset, static_cast<int32_t>(ival)); break;
+            default:
+                return "unexpected format " + std::to_string(mapping->format);
+        }
     }
-    return true;
+    return std::nullopt;
 }
 
-extern "C" bool waynaptics_load_synclient_config(const char *path, DeviceIntPtr dev) {
+bool waynaptics_load_synclient_config(const std::string &path, DeviceIntPtr dev) {
     std::ifstream file(path);
     if (!file.is_open()) {
-        fprintf(stderr, "[CONFIG] Failed to open config file: %s\n", path);
+        wlog("config", "Failed to open config file: %s", path.c_str());
         return false;
     }
 
@@ -162,11 +163,10 @@ extern "C" bool waynaptics_load_synclient_config(const char *path, DeviceIntPtr 
         if (trimmed.empty() || trimmed == "Parameter settings:")
             continue;
 
-        // Parse "name = value"
         size_t eq_pos = trimmed.find('=');
         if (eq_pos == std::string::npos) {
-            fprintf(stderr, "[CONFIG] Warning: skipping malformed line %d: %s\n",
-                    line_num, trimmed.c_str());
+            wlog("config", "Warning: skipping malformed line %d: %s",
+                 line_num, trimmed.c_str());
             continue;
         }
 
@@ -176,193 +176,121 @@ extern "C" bool waynaptics_load_synclient_config(const char *path, DeviceIntPtr 
         if (name.empty() || value_str.empty())
             continue;
 
-        // GrabEventDevice is controlled by --dry flag, not config file
-        // TouchpadOff gets set to 2 by DEs with "disable while typing" —
-        // not a real user preference, ignore it
-        if (name == "GrabEventDevice" || name == "TouchpadOff") {
-            fprintf(stderr, "[CONFIG] Ignoring %s (not a portable setting)\n", name.c_str());
+        auto err = waynaptics_apply_option(name, value_str, dev);
+        if (err) {
+            wlog("config", "Warning: %s (line %d)", err->c_str(), line_num);
             continue;
         }
 
-        const ParamMapping *mapping = find_param(name.c_str());
-        if (!mapping) {
-            fprintf(stderr, "[CONFIG] Warning: unknown parameter '%s', skipping\n",
-                    name.c_str());
-            continue;
-        }
-
-        Atom prop_atom = XIGetKnownProperty(mapping->prop_name);
-        if (prop_atom == 0) {
-            fprintf(stderr, "[CONFIG] Warning: property '%s' not registered, skipping '%s'\n",
-                    mapping->prop_name, name.c_str());
-            continue;
-        }
-
-        XIPropertyValuePtr val = waynaptics_get_property_value(prop_atom);
-        if (!val || !val->data) {
-            fprintf(stderr, "[CONFIG] Warning: property '%s' has no value, skipping '%s'\n",
-                    mapping->prop_name, name.c_str());
-            continue;
-        }
-
-        // Parse and apply value based on type and format
-        if (mapping->format == 0) {
-            // Float property
-            char *endptr;
-            double dval = strtod(value_str.c_str(), &endptr);
-            if (endptr == value_str.c_str()) {
-                fprintf(stderr, "[CONFIG] Warning: invalid float value '%s' for '%s'\n",
-                        value_str.c_str(), name.c_str());
-                continue;
-            }
-            ((float *)val->data)[mapping->offset] = (float)dval;
-        } else {
-            // Integer property (8, 16, or 32 bit)
-            char *endptr;
-            long ival = strtol(value_str.c_str(), &endptr, 10);
-            if (endptr == value_str.c_str()) {
-                fprintf(stderr, "[CONFIG] Warning: invalid integer value '%s' for '%s'\n",
-                        value_str.c_str(), name.c_str());
-                continue;
-            }
-
-            switch (mapping->format) {
-                case 8:
-                    ((uint8_t *)val->data)[mapping->offset] = (uint8_t)ival;
-                    break;
-                case 16:
-                    ((uint16_t *)val->data)[mapping->offset] = (uint16_t)ival;
-                    break;
-                case 32:
-                    ((int32_t *)val->data)[mapping->offset] = (int32_t)ival;
-                    break;
-                default:
-                    fprintf(stderr, "[CONFIG] Warning: unexpected format %d for '%s'\n",
-                            mapping->format, name.c_str());
-                    continue;
-            }
-        }
-
-        waynaptics_call_set_property_handler(dev, prop_atom, val, FALSE);
-
-        fprintf(stderr, "[CONFIG] %s = %s (property: %s[%d])\n",
-                name.c_str(), value_str.c_str(), mapping->prop_name, mapping->offset);
+        wlog("config", "%s = %s", name.c_str(), value_str.c_str());
     }
 
     return true;
 }
 
-extern "C" const char *waynaptics_apply_option(const char *name, const char *value, DeviceIntPtr dev) {
-    static char errbuf[256];
-
-    if (strcmp(name, "GrabEventDevice") == 0 || strcmp(name, "TouchpadOff") == 0) {
-        snprintf(errbuf, sizeof(errbuf), "parameter '%s' is not supported", name);
-        return errbuf;
-    }
+std::optional<std::string> waynaptics_apply_option(const std::string &name, const std::string &value, DeviceIntPtr dev) {
+    if (name == "GrabEventDevice" || name == "TouchpadOff")
+        return std::string("parameter '") + name + "' is not supported";
 
     const ParamMapping *mapping = find_param(name);
-    if (!mapping) {
-        snprintf(errbuf, sizeof(errbuf), "unknown parameter '%s'", name);
-        return errbuf;
-    }
+    if (!mapping)
+        return std::string("unknown parameter '") + name + "'";
 
     Atom prop_atom = XIGetKnownProperty(mapping->prop_name);
-    if (prop_atom == 0) {
-        snprintf(errbuf, sizeof(errbuf), "property '%s' not registered", mapping->prop_name);
-        return errbuf;
-    }
+    if (prop_atom == 0)
+        return std::string("property '") + mapping->prop_name + "' not registered";
 
-    XIPropertyValuePtr val = waynaptics_get_property_value(prop_atom);
-    if (!val || !val->data) {
-        snprintf(errbuf, sizeof(errbuf), "property '%s' has no value", mapping->prop_name);
-        return errbuf;
-    }
+    auto val = waynaptics_get_property_value(prop_atom);
+    if (!val)
+        return std::string("property '") + mapping->prop_name + "' has no value";
 
-    if (mapping->format == 0) {
-        char *endptr;
-        double dval = strtod(value, &endptr);
-        if (endptr == value) {
-            snprintf(errbuf, sizeof(errbuf), "invalid float value '%s'", value);
-            return errbuf;
-        }
-        ((float *)val->data)[mapping->offset] = (float)dval;
-    } else {
-        char *endptr;
-        long ival = strtol(value, &endptr, 10);
-        if (endptr == value) {
-            snprintf(errbuf, sizeof(errbuf), "invalid integer value '%s'", value);
-            return errbuf;
-        }
-        switch (mapping->format) {
-            case 8:  ((uint8_t *)val->data)[mapping->offset] = (uint8_t)ival; break;
-            case 16: ((uint16_t *)val->data)[mapping->offset] = (uint16_t)ival; break;
-            case 32: ((int32_t *)val->data)[mapping->offset] = (int32_t)ival; break;
-            default:
-                snprintf(errbuf, sizeof(errbuf), "unexpected format %d", mapping->format);
-                return errbuf;
-        }
-    }
+    if (mapping->offset >= val->size)
+        return std::string("property '") + mapping->prop_name + "' offset out of bounds";
 
-    waynaptics_call_set_property_handler(dev, prop_atom, val, FALSE);
-    return nullptr;
+    auto err = parse_and_write(mapping, value, *val);
+    if (err)
+        return err;
+
+    waynaptics_update_property(dev, prop_atom, val->data);
+    return std::nullopt;
 }
 
-extern "C" void waynaptics_dump_config(void (*emit_line)(const char *line, void *ctx), void *ctx) {
+void waynaptics_dump_config(std::function<void(const std::string &)> emit_line) {
     char buf[256];
     for (const ParamMapping *p = params; p->name != nullptr; p++) {
         Atom prop_atom = XIGetKnownProperty(p->prop_name);
         if (prop_atom == 0)
             continue;
-        XIPropertyValuePtr val = waynaptics_get_property_value(prop_atom);
-        if (!val || !val->data)
+        auto val = waynaptics_get_property_value(prop_atom);
+        if (!val)
             continue;
+        if (p->offset >= val->size) {
+            wlog("config", "Warning: dump: property '%s' offset %d out of bounds (size %ld)",
+                 p->prop_name, p->offset, val->size);
+            continue;
+        }
 
         if (p->format == 0) {
-            float fval = ((float *)val->data)[p->offset];
+            float fval = val->read<float>(p->offset);
             snprintf(buf, sizeof(buf), "    %-24s = %g", p->name, fval);
         } else {
             long ival = 0;
             switch (p->format) {
-                case 8:  ival = ((uint8_t *)val->data)[p->offset]; break;
-                case 16: ival = ((uint16_t *)val->data)[p->offset]; break;
-                case 32: ival = ((int32_t *)val->data)[p->offset]; break;
+                case 8:  ival = val->read<uint8_t>(p->offset); break;
+                case 16: ival = val->read<uint16_t>(p->offset); break;
+                case 32: ival = val->read<int32_t>(p->offset); break;
             }
             snprintf(buf, sizeof(buf), "    %-24s = %ld", p->name, ival);
         }
-        emit_line(buf, ctx);
+        emit_line(buf);
     }
 }
 
 // Initial config snapshot: stores name→value pairs captured after DEVICE_INIT
 static std::map<std::string, std::string> g_initial_config;
 
-static void snapshot_emit(const char *line, void *ctx) {
-    auto *map = static_cast<std::map<std::string, std::string>*>(ctx);
-    std::string l(line);
-    auto eq = l.find('=');
+static void snapshot_emit(const std::string &line) {
+    auto eq = line.find('=');
     if (eq == std::string::npos)
         return;
-    std::string name = l.substr(0, eq);
-    std::string value = l.substr(eq + 1);
-    // trim whitespace
-    while (!name.empty() && name.front() == ' ') name.erase(0, 1);
-    while (!name.empty() && name.back() == ' ') name.pop_back();
-    while (!value.empty() && value.front() == ' ') value.erase(0, 1);
-    while (!value.empty() && value.back() == ' ') value.pop_back();
-    (*map)[name] = value;
+    std::string name = trim(line.substr(0, eq));
+    std::string value = trim(line.substr(eq + 1));
+    g_initial_config[name] = value;
 }
 
-extern "C" void waynaptics_snapshot_initial_config(void) {
+void waynaptics_snapshot_initial_config() {
     g_initial_config.clear();
-    waynaptics_dump_config(snapshot_emit, &g_initial_config);
-    fprintf(stderr, "[CONFIG] Snapshot: captured %zu initial parameter values\n",
-            g_initial_config.size());
+    waynaptics_dump_config(snapshot_emit);
+    wlog("config", "Snapshot: captured %zu initial parameter values",
+         g_initial_config.size());
 }
 
-extern "C" void waynaptics_restore_initial_config(DeviceIntPtr dev) {
-    fprintf(stderr, "[CONFIG] Restoring %zu initial parameter values\n",
-            g_initial_config.size());
+void waynaptics_restore_initial_config(DeviceIntPtr dev) {
+    wlog("config", "Restoring %zu initial parameter values",
+         g_initial_config.size());
     for (const auto &[name, value] : g_initial_config) {
-        waynaptics_apply_option(name.c_str(), value.c_str(), dev);
+        waynaptics_apply_option(name, value, dev);
+    }
+}
+
+void waynaptics_reload_config(const std::string &config_path,
+                              const std::string &runtime_config_path,
+                              DeviceIntPtr dev) {
+    waynaptics_restore_initial_config(dev);
+
+    if (!config_path.empty()) {
+        if (!waynaptics_load_synclient_config(config_path, dev))
+            wlog("config", "warning: failed to load config '%s'", config_path.c_str());
+    }
+
+    if (!runtime_config_path.empty() && runtime_config_path != config_path) {
+        if (access(runtime_config_path.c_str(), R_OK) == 0) {
+            if (!waynaptics_load_synclient_config(runtime_config_path, dev))
+                wlog("config", "warning: failed to load runtime config '%s'",
+                     runtime_config_path.c_str());
+            else
+                wlog("config", "loaded runtime config overrides from '%s'",
+                     runtime_config_path.c_str());
+        }
     }
 }

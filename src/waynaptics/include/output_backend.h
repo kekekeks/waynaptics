@@ -1,9 +1,10 @@
 #pragma once
 
+#include <memory>
+
 struct OutputBackend {
     virtual ~OutputBackend() = default;
     virtual bool init() = 0;
-    virtual void destroy() = 0;
     virtual void post_motion(int dx, int dy) = 0;
     virtual void post_button(int button, bool is_down) = 0;
     // Smooth scroll: scroll_type is SCROLL_TYPE_VERTICAL(8) or SCROLL_TYPE_HORIZONTAL(9)
@@ -13,5 +14,5 @@ struct OutputBackend {
     virtual void sync() = 0;
 };
 
-// Global output backend pointer — set by main before driver starts
-extern OutputBackend *g_output_backend;
+// Global output backend — set by main before driver starts
+extern std::unique_ptr<OutputBackend> g_output_backend;

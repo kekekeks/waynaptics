@@ -8,9 +8,7 @@
 #include <cstdio>
 #include "synshared.h"
 
-extern "C" {
-
-int xf86FlushInput(int fd) {
+extern "C" int xf86FlushInput(int fd) {
     pollfd poll_fd;
     /* this needs to be big enough to flush an evdev event. */
     char c[256];
@@ -26,6 +24,4 @@ int xf86FlushInput(int fd) {
             return 0;
     }
     return 0;
-}
-
 }
